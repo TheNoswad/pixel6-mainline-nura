@@ -50,7 +50,8 @@ Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
 - Suspend saves no power: s2idle works (Wi-Fi is unloaded around it) but
   draws about as much as awake idle, and deep suspend never resumes.
   Battery life is short (about 600 mA idle drain measured).
-- No double-tap to wake, no Vulkan (PanVK has no G78 support yet).
+- No double-tap to wake.
+- Vulkan (PanVK) is new and opt-in: set `PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1`.
 - Rear cameras (main GN1, ultra-wide) don't work.
 - GPS has no warm start yet.
 - The fuel gauge reports a fixed battery temperature.
@@ -73,7 +74,7 @@ it is an overlay applied onto one pinned pmaports commit (`UPSTREAM`).
 | `main/aoc-voiced` | Keeps the AoC voice call path open during calls |
 | `main/waydroid-sensors-usf` | Sensors HAL for Waydroid |
 | `main/bootmac`, `main/postmarketos-base-ui` | Small changes to the upstream packages (Bluetooth address, audio follows headsets, HFP) |
-| `temp/` | Forks of Alpine packages with patches: modemmanager (Shannon plugin), mesa (G78), libcamera (gs101 CSIS), callaudiod, mmsd-tng, mobile-broadband-provider-info, waydroid |
+| `temp/` | Forks of Alpine packages with patches: modemmanager (Shannon plugin), mesa (G78, PanVK v9), libcamera (gs101 CSIS), callaudiod, mmsd-tng, mobile-broadband-provider-info, waydroid |
 | `android/` | Android-side Waydroid parts, built by hand with the NDK |
 | `scripts/apply.sh` | Copy the packages onto a pmaports checkout |
 | `scripts/build.sh` | Build packages and sideload them onto the phone |

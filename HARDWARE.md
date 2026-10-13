@@ -42,8 +42,19 @@ with the same Mesa patch for each runtime branch (the device package sets
 `FLATPAK_GL_DRIVERS=oriole`). That extension is not part of this
 repository; without it Flatpak apps fall back to software rendering.
 
-No Vulkan: PanVK does not support the G78 (Valhall v9 with the job
-manager) yet.
+Vulkan: upstream PanVK has no support for Valhall v9 GPUs with the job
+manager (G57/G68/G77/G78). `temp/mesa` adds it
+(`panvk-valhall-v9-jm.patch`): compute, direct, indexed and indirect draws,
+layered rendering (one draw per layer, as on Bifrost) and WSI. It reports
+Vulkan 1.0. In VK-GL-CTS 1.4.4 (every 5th test of the default mustpass)
+126127 tests pass; the few failures are tests that are flaky or failing
+upstream on other Mali GPUs, or conformance checks. vkcube, vkmark and GTK4's
+Vulkan renderer work. Not supported: geometry and tessellation shaders,
+transform feedback, multiDrawIndirect.
+
+Like upstream does for other little-tested GPUs, the driver only shows up
+when `PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1` is set; install
+`mesa-vulkan-panfrost` and run an app with that variable to use it.
 
 ## CPU, thermal, performance
 
@@ -162,5 +173,5 @@ options, the iptables modules (device package), the GNSS socket bind mount
 
 ## Not working
 
-Double-tap to wake (the touch driver has no gesture mode), Vulkan, deep
+Double-tap to wake (the touch driver has no gesture mode), deep
 suspend, rear cameras, GPS warm start, carrier detection from the SIM.

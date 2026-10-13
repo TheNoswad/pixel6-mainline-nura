@@ -1,5 +1,6 @@
-# Local-only: Alpine main/mesa plus Mali-G78 (Pixel 6, gs101) support.
-# pkgrel 100 so it outranks Alpine's build of the same version.
+# Local-only: Alpine main/mesa plus Mali-G78 (Pixel 6, gs101) support,
+# including PanVK (Vulkan) for Valhall v9 behind the Job Manager.
+# pkgrel 100+ so it outranks Alpine's build of the same version.
 # Trimmed to what a Pixel 6 uses (panfrost + llvmpipe GL, PanVK) and built
 # without crossdirect: crossdirect only redirects C/C++, so Rust objects came
 # out x86_64. The aarch64 makedepends sit at the top because pmbootstrap does
@@ -8,7 +9,7 @@
 maintainer="team/alpine-desktop <achill@achill.org>"
 pkgname=mesa
 pkgver=26.2.4
-pkgrel=100
+pkgrel=101
 pkgdesc="Mesa DRI OpenGL library"
 url="https://www.mesa3d.org"
 arch="aarch64"
@@ -84,6 +85,7 @@ source="https://mesa.freedesktop.org/archive/mesa-${pkgver/_/-}.tar.xz
 	riscv64-tls.patch
 	llvm23.patch
 	gs101-panfrost-g78.patch
+	panvk-valhall-v9-jm.patch
 	"
 builddir="$srcdir/mesa-${pkgver/_/-}"
 options="!check !pmb:crossdirect"
@@ -426,4 +428,5 @@ bc1824e1e4452a40732fc69874d7e1a66f7803717a314790dcf48867eba34bc9441331ef031e3869
 ce1887fb7d425b94c375a0547bee40c308809c01f5ce1bcddabcc69a7fcb445efb9d5f5c7bac49b2778ab40687c7bce204d278b0bf028d124c75e59083107fba  riscv64-tls.patch
 0ca39282aa42d0b10a5d88a49cc91aea94caa6a9785e7bf75071d101c09ec5debd63a4478053657e163c94007d765d1f05c98a12fe16ad044c3fc10ef1fc27e9  llvm23.patch
 2c8635e5736539205a5c3398504457e742dabef4189d9e5a7d23ca14d8aa48669c6b1b55f1419ce3711279a766ac69eafa639c16fad90e47d642abc71d330b57  gs101-panfrost-g78.patch
+76f66548c82abf8bfbfb119bf44488f9321e4a38fd58d63dd16fc021bb5b3ad473d1e17e0b3370d75a4e05561165427a32f98a8a720c48503cafc0e3f39a0f02  panvk-valhall-v9-jm.patch
 "
