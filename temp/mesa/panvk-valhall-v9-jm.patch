@@ -16,15 +16,18 @@ a Job Manager. This adds v9 to the JM backend:
   jobs, so that is reset before a batch is issued again;
 - LD_TILE cannot wait on the resource before v10, and storing to
   multisampled images from compute gives wrong results on v9, so
-  multisampled copies use the graphics path.
+  multisampled copies use the graphics path;
+- the tiler heap is 512 MiB on v9, because MALLOC_VERTEX jobs also take
+  the transformed vertices and varyings from it (128 MiB gave tiler OOM
+  faults on draws of ~1M points).
 
 v9 is gated behind PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1 like other
 not-well-tested architectures and reports Vulkan 1.0.
 
-Tested on a Pixel 6 (Mali-G78 MP20, panfrost DRM): VK-GL-CTS 1.4.4, every
-5th test of the default mustpass: 126127 pass, failures only in tests that
-are flaky or failing upstream on other Mali GPUs or that check for
-conformance; vkcube, vkmark and the GTK4 Vulkan renderer.
+Tested on a Pixel 6 (Mali-G78 MP20, panfrost DRM): VK-GL-CTS 1.4.4, the full
+default mustpass: 629973 pass, 27 fail, almost all in tests that are flaky
+or failing upstream on other Mali GPUs or that check for conformance (the
+pipeline_barrier tiler OOMs among them are fixed by the bigger heap); vkcube, vkmark and the GTK4 Vulkan renderer.
 
 The community v9 PanVK port for Mali-G57 on kbase
 (https://github.com/Lock283/panvk-g99-jm) showed which pieces were
@@ -1915,6 +1918,25 @@ index 5560c7228d6..44182a3d219 100644
     return false;
  }
  
+diff --git a/src/panfrost/vulkan/panvk_vX_device.c b/src/panfrost/vulkan/panvk_vX_device.c
+index 5e54c6888c5..0bd4b7a1230 100644
+--- a/src/panfrost/vulkan/panvk_vX_device.c
++++ b/src/panfrost/vulkan/panvk_vX_device.c
+@@ -491,8 +491,13 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
+ #endif
+ 
+ #if PAN_ARCH <= 9
++   /* On v9, MALLOC_VERTEX jobs also take the transformed vertices and
++    * varyings from the tiler heap, so draws of ~1M points overflow 128 MiB
++    * (tiler OOM job faults). The heap is only backed on fault, so the bigger
++    * range costs nothing until it is used.
++    */
+    result = panvk_priv_bo_create(
+-      device, 128 * 1024 * 1024,
++      device, (PAN_ARCH == 9 ? 512 : 128) * 1024 * 1024,
+       PAN_KMOD_BO_FLAG_NO_MMAP | PAN_KMOD_BO_FLAG_ALLOC_ON_FAULT,
+       VK_SYSTEM_ALLOCATION_SCOPE_DEVICE, &device->tiler_heap);
+    if (result != VK_SUCCESS)
 diff --git a/src/panfrost/vulkan/panvk_vX_nir_lower_input_attachment_loads.c b/src/panfrost/vulkan/panvk_vX_nir_lower_input_attachment_loads.c
 index 4eff2ecab5f..1f3f264acce 100644
 --- a/src/panfrost/vulkan/panvk_vX_nir_lower_input_attachment_loads.c
