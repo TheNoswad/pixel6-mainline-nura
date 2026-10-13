@@ -5,6 +5,14 @@ Pixel 6 (`google-oriole`, Tensor gs101) as a daily-usable phone: calls, SMS,
 MMS, mobile data, GPS, Bluetooth audio, sensors, haptics, the front camera
 and Waydroid with hardware GL.
 
+**Built on M8's work.** The kernel is
+[M8's gs101-mainline tree](https://github.com/m8l8th814n-eng/gs101-mainline),
+which did the mainline gs101 bring-up, and the modem boots with M8's
+reverse-engineered [tinycbd](https://github.com/m8l8th814n-eng/tinycbd).
+This repository is packaging and fixes on top of that. M8 also has
+[Mesa with Vulkan](https://github.com/m8l8th814n-eng/mesa-gs101) and
+[U-Boot](https://github.com/m8l8th814n-eng/u-boot-gs101) for gs101.
+
 > **Unofficial.** This is a personal project. It is not affiliated with or
 > endorsed by postmarketOS, Alpine Linux, Google or the authors of the
 > kernel tree it builds on. **Do not report problems with it to
@@ -83,7 +91,9 @@ it is an overlay applied onto one pinned pmaports commit (`UPSTREAM`).
 
 The kernel is [M8's gs101-mainline tree](https://github.com/m8l8th814n-eng/gs101-mainline),
 which did the hard part of mainline gs101 support. The modem boots with
-M8's [tinycbd](https://github.com/m8l8th814n-eng/tinycbd). Thanks to the
+M8's [tinycbd](https://github.com/m8l8th814n-eng/tinycbd), and the audio
+bring-up used M8's [gs101-miscscripts](https://github.com/m8l8th814n-eng/gs101-miscscripts).
+Thanks to the
 postmarketOS, Alpine, Mesa, libcamera, ModemManager and Waydroid projects
 whose work all of this sits on.
 
