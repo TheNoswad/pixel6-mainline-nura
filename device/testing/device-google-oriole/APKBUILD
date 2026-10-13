@@ -1,0 +1,248 @@
+maintainer="Ingo Reitz <9l@9lo.re>"
+pkgname=device-google-oriole
+pkgdesc="Google Pixel 6"
+pkgver=6
+pkgrel=37
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	alsa-utils
+	aoc-voiced
+	android-tools
+	bcm4776-gnssd
+	bootmac
+	bootmac-systemd
+	firmware-google-oriole-audio
+	firmware-google-oriole-bt
+	firmware-google-oriole-gnss
+	firmware-google-oriole-haptics
+	firmware-google-oriole-wifi
+	linux-postmarketos-gs101
+	oriole-modem
+	oriole-sensors
+	postmarketos-base
+	soc-google-gs101
+	util-linux-misc
+"
+makedepends="devicepkg-dev"
+source="
+	deviceinfo
+	kernel-cmdline.conf
+	modules-initfs
+	90-s2idle.conf
+	oriole-s2idle.tmpfiles
+	oriole-reboot-mark.service
+	oriole-bcmdhd-sleep
+	90-bcmdhd-unmanaged.conf
+	oriole-charger-detect
+	oriole-charger-detect.service
+	oriole-charger.target
+	oriole-charger.service
+	oriole-charger-monitor
+	oriole-speaker-setup
+	oriole-speaker-setup.service
+	61-oriole-stock-ro.rules
+	run-oriole-persist.mount
+	71-oriole-haptics.rules
+	oriole-haptics-cal
+	oriole-haptics-cal.service
+	oriole-audio.modprobe
+	90-oriole-audio.rules
+	google-oriole-aoc.conf
+	oriole-speaker-path.conf
+	oriole-alsa-restore.conf
+	oriole-speaker.pa
+	oriole-pulse-speaker
+	oriole-pulse-speaker.service
+	90-oriole-aoc.wireplumber.conf
+	90-oriole-flatpak-gl.conf
+	oriole-cpufreq-ratelimit.service
+	90-oriole-sched.conf
+	90-oriole-lockup.conf
+	oriole-waydroid-netfilter.conf
+	oriole-ui-uclamp
+	oriole-ui-uclamp.service
+	ucm2-aoc-snd-card.conf
+	ucm2-oriole-HiFi.conf
+	ucm2-oriole-VoiceCall.conf
+	oriole-camera.modules-load
+	90-oriole-camera.rules
+	90-oriole-camera.wireplumber.conf
+	oriole-camera.modprobe
+	80-device-google-oriole.preset
+"
+
+build() {
+	devicepkg_build $startdir $pkgname
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+	install -Dm644 "$srcdir"/90-s2idle.conf \
+		"$pkgdir"/usr/lib/systemd/sleep.conf.d/90-s2idle.conf
+	install -Dm644 "$srcdir"/oriole-s2idle.tmpfiles \
+		"$pkgdir"/usr/lib/tmpfiles.d/oriole-s2idle.conf
+	install -Dm644 "$srcdir"/90-bcmdhd-unmanaged.conf \
+		"$pkgdir"/usr/lib/NetworkManager/conf.d/90-bcmdhd-unmanaged.conf
+	install -Dm644 "$srcdir"/90-oriole-flatpak-gl.conf \
+		"$pkgdir"/usr/lib/environment.d/90-oriole-flatpak-gl.conf
+	install -Dm644 "$srcdir"/90-oriole-sched.conf \
+		"$pkgdir"/usr/lib/sysctl.d/90-oriole-sched.conf
+	install -Dm644 "$srcdir"/90-oriole-lockup.conf \
+		"$pkgdir"/usr/lib/sysctl.d/90-oriole-lockup.conf
+	# legacy iptables for Android's netd in Waydroid (the container cannot
+	# load modules)
+	install -Dm644 "$srcdir"/oriole-waydroid-netfilter.conf \
+		"$pkgdir"/usr/lib/modules-load.d/oriole-waydroid-netfilter.conf
+	install -Dm755 "$srcdir"/oriole-ui-uclamp \
+		"$pkgdir"/usr/libexec/oriole-ui-uclamp
+	install -Dm644 "$srcdir"/oriole-ui-uclamp.service \
+		"$pkgdir"/usr/lib/systemd/user/oriole-ui-uclamp.service
+	local w
+	for w in mobi.phosh.Shell mobi.phosh.Phrog; do
+		mkdir -p "$pkgdir"/usr/lib/systemd/user/$w.service.wants
+		ln -s ../oriole-ui-uclamp.service \
+			"$pkgdir"/usr/lib/systemd/user/$w.service.wants/
+	done
+	install -Dm644 -t "$pkgdir"/usr/lib/systemd/system \
+		"$srcdir"/oriole-charger.target "$srcdir"/oriole-charger.service \
+		"$srcdir"/oriole-charger-detect.service \
+		"$srcdir"/oriole-reboot-mark.service
+	install -d "$pkgdir"/usr/lib/systemd/system/sysinit.target.wants
+	ln -s ../oriole-reboot-mark.service \
+		"$pkgdir"/usr/lib/systemd/system/sysinit.target.wants/
+	install -Dm644 -t "$pkgdir"/usr/lib/systemd/system \
+		"$srcdir"/oriole-cpufreq-ratelimit.service
+	install -d "$pkgdir"/usr/lib/systemd/system/multi-user.target.wants
+	ln -s ../oriole-cpufreq-ratelimit.service \
+		"$pkgdir"/usr/lib/systemd/system/multi-user.target.wants/
+	install -d "$pkgdir"/usr/lib/systemd/system/graphical.target.wants
+	ln -s ../oriole-charger-detect.service \
+		"$pkgdir"/usr/lib/systemd/system/graphical.target.wants/
+	install -Dm755 "$srcdir"/oriole-bcmdhd-sleep \
+		"$pkgdir"/usr/lib/systemd/system-sleep/oriole-bcmdhd
+	install -Dm755 -t "$pkgdir"/usr/libexec \
+		"$srcdir"/oriole-charger-monitor "$srcdir"/oriole-charger-detect
+
+	# cameras: dma-buf heap for libcamera's software ISP, the raw CSIS
+	# nodes hidden from PipeWire, the not yet working rear sensors unbound
+	install -Dm644 "$srcdir"/oriole-camera.modules-load \
+		"$pkgdir"/usr/lib/modules-load.d/oriole-camera.conf
+	install -Dm644 "$srcdir"/90-oriole-camera.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/90-oriole-camera.rules
+	install -Dm644 "$srcdir"/90-oriole-camera.wireplumber.conf \
+		"$pkgdir"/usr/share/wireplumber/wireplumber.conf.d/90-oriole-camera.conf
+	install -Dm644 "$srcdir"/oriole-camera.modprobe \
+		"$pkgdir"/usr/lib/modprobe.d/oriole-camera.conf
+
+	# stock partitions: read-only at the block layer, persist mounted ro
+	install -Dm644 "$srcdir"/61-oriole-stock-ro.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/61-oriole-stock-ro.rules
+	install -Dm644 "$srcdir"/run-oriole-persist.mount \
+		"$pkgdir"/usr/lib/systemd/system/run-oriole-persist.mount
+
+	# haptics: feedbackd vibra device, factory calibration from persist
+	install -Dm644 "$srcdir"/71-oriole-haptics.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/71-oriole-haptics.rules
+	install -Dm755 "$srcdir"/oriole-haptics-cal \
+		"$pkgdir"/usr/libexec/oriole-haptics-cal
+	install -Dm644 "$srcdir"/oriole-haptics-cal.service \
+		"$pkgdir"/usr/lib/systemd/system/oriole-haptics-cal.service
+
+	# speakers
+	install -Dm755 "$srcdir"/oriole-speaker-setup \
+		"$pkgdir"/usr/libexec/oriole-speaker-setup
+	install -Dm644 "$srcdir"/oriole-speaker-setup.service \
+		"$pkgdir"/usr/lib/systemd/system/oriole-speaker-setup.service
+	install -d "$pkgdir"/usr/lib/systemd/system/sound.target.wants
+	ln -s ../oriole-speaker-setup.service \
+		"$pkgdir"/usr/lib/systemd/system/sound.target.wants/
+	install -Dm644 "$srcdir"/oriole-audio.modprobe \
+		"$pkgdir"/usr/lib/modprobe.d/oriole-audio.conf
+	install -Dm644 "$srcdir"/90-oriole-audio.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/90-oriole-audio.rules
+	install -Dm644 "$srcdir"/google-oriole-aoc.conf \
+		"$pkgdir"/usr/share/pulseaudio/alsa-mixer/profile-sets/google-oriole-aoc.conf
+	install -Dm644 "$srcdir"/google-oriole-aoc.conf \
+		"$pkgdir"/usr/share/alsa-card-profile/mixer/profile-sets/google-oriole-aoc.conf
+	install -Dm644 "$srcdir"/oriole-speaker-path.conf \
+		"$pkgdir"/usr/share/pulseaudio/alsa-mixer/paths/oriole-speaker.conf
+	install -Dm644 "$srcdir"/oriole-speaker-path.conf \
+		"$pkgdir"/usr/share/alsa-card-profile/mixer/paths/oriole-speaker.conf
+	install -Dm644 "$srcdir"/oriole-speaker.pa \
+		"$pkgdir"/etc/pulse/default.pa.d/oriole-speaker.pa
+	install -Dm755 "$srcdir"/oriole-pulse-speaker \
+		"$pkgdir"/usr/libexec/oriole-pulse-speaker
+	install -Dm644 "$srcdir"/oriole-pulse-speaker.service \
+		"$pkgdir"/usr/lib/systemd/user/oriole-pulse-speaker.service
+	install -d "$pkgdir"/usr/lib/systemd/user/default.target.wants
+	ln -s ../oriole-pulse-speaker.service \
+		"$pkgdir"/usr/lib/systemd/user/default.target.wants/
+	install -Dm644 "$srcdir"/90-oriole-aoc.wireplumber.conf \
+		"$pkgdir"/usr/share/wireplumber/wireplumber.conf.d/90-oriole-aoc.conf
+	# ALSA UCM: media (HiFi) and calls (Voice Call, switched by callaudiod);
+	# PipeWire prefers it over the ACP profile set above, which stays as the
+	# fallback
+	install -Dm644 "$srcdir"/ucm2-aoc-snd-card.conf \
+		"$pkgdir"/usr/share/alsa/ucm2/conf.d/aoc-snd-card/aoc-snd-card.conf
+	install -Dm644 "$srcdir"/ucm2-oriole-HiFi.conf \
+		"$pkgdir"/usr/share/alsa/ucm2/Google/oriole/HiFi.conf
+	install -Dm644 "$srcdir"/ucm2-oriole-VoiceCall.conf \
+		"$pkgdir"/usr/share/alsa/ucm2/Google/oriole/VoiceCall.conf
+	install -Dm644 "$srcdir"/80-device-google-oriole.preset \
+		-t "$pkgdir"/usr/lib/systemd/system-preset/
+	local u
+	for u in alsa-restore alsa-state; do
+		install -Dm644 "$srcdir"/oriole-alsa-restore.conf \
+			"$pkgdir"/usr/lib/systemd/system/$u.service.d/oriole.conf
+	done
+}
+
+sha512sums="
+7f52c3a5d477d648dca32d4aad61e62fb625598f15a1fb254975ac5f15fe94a99783517952ddf416427e494c012e466c7033245f958656ee5e27b7117f5dc8d7  deviceinfo
+9ed1246237067259c1e533bbbda28de56836a8ebe2fe9dc079f038552062be6b7daf9e2f46261d293d7eb58fa2d3d52d516f98c309f6adcd01d910a0e436cfcf  kernel-cmdline.conf
+7cc2a13f09e03de2dfc8e86c35bee4a3240092aec5aa3a465f8a2b0345dd8a6c5ed0244167b803c5c9db4783da11bffb15c913fb4ba34dc9763f145bb6866951  modules-initfs
+819382fb3e223b25c3272b8dbeb7110bac9f305ee80481c56d22377d9e4238ff4133a3931fd5cadf23f2549a3154dcc6199fdbeaa86f69f2cbb7f8ee7eafc585  90-s2idle.conf
+b0ac5c26340d796b75069334a9a20ccd2eeaad822812e79e77a19674db4978f9e41103448346d6feade0eb056f7605090c6378834dc22c38a2886966a7f47fd8  oriole-s2idle.tmpfiles
+f97acaeeca9f03800bb2acedfd4a580a1ce1a58f43e7c83cc05e6ecae2c05f68d0dbf62ec5607bdcf07076cb53fb4ff0c4e2a7c73860bd6ccabc5dcae1e8d67e  oriole-reboot-mark.service
+ee433d6d09e0ea99a76a0d10404fdddf8c524eb277829404ab87c9bb4244d1ef434a080f2dba50fd9b9b2c29646dcea07f64e6d2c7a45586f728fa19a095d638  oriole-bcmdhd-sleep
+7d7e9fa211623df0fc954898981e80fb9314caaaef940244d99953e739b0a65bdd522795306e827eb7ca1ff6e3d5cb894d33e876186886ac96bab1e3694069ca  90-bcmdhd-unmanaged.conf
+4ad93bdc5b6c49aaf27fe21c61088a71f8a678eee127a1d1959acc095867bc4d44977cc68e9df845cb61a574683bd655a8e136cf6bfc025520ed798c5c5583ff  oriole-charger-detect
+01e81c9c4cb179651b47a0d89fd60482a081c8ebbfd389511f2ffa3b6b274aa052d3570ceccb676fae7e27218a8fa404000b735ab6e4c0ece1d4979561d1d566  oriole-charger-detect.service
+d4986006f91db748803885a1ec62db813cdeb69afee9ed3d5acc0de77e22f680953a970eeb70850da611d8cd3246d3f51aa71e57dec5c13845c0d0dbc79bb50b  oriole-charger.target
+edfa32e8eab68db56bab40f2f84c8a62f94004c6c3cc4c0c0de9664cd6c40c5209ea315ada4068db2c31e2a84709173dfdeb23441b9fa72af459dfbf614881d8  oriole-charger.service
+4e0802a2d96b1bd7da65970c09a2682ee7b640b60e8cdcca57f017e4e52326fd8db78901e48fb782bb63e1423fe3fc4b4160e6d19a895343abc74c2d2014ba6b  oriole-charger-monitor
+0cde53bf1995836ef2fbc276f17695da7dcf534470759a7909b77d7b09657979373d9d30e9b0d0cbe24d760ae43ac1b386bb0f97d7dbac5d1d39fa3513e563b6  oriole-speaker-setup
+0e61065732d41cc74d56a47f9e01751edcaae8e3a52e756adf21d110443279780ced1a5a15949dc1010906405f6582fd2c7bc445b959bba501df9288af56fdc9  oriole-speaker-setup.service
+ff885bf7551b567605f7bf48f4fc54813c7c0dd4793b2cdc31dc5eea2cad7282764b88aa402a9bbb76dd7156b91b912ef0e27e9efcec2a1b037642eeff659084  61-oriole-stock-ro.rules
+73b2a890590d9e08392a75869dda6c6fe0d5767c0d0f081e4ff305fa34aab330c3e9b3fcef0bf98fa431548bc609d3e652e945477ef2e5a02c1df35c0c0bf693  run-oriole-persist.mount
+59634583cc9524dfe9c06c24bfa664dc3a1c81482b2081429f22d9a4956e89999d5a7cfcc933ab5531ff8dcb8dc897831cb205e75b0ecfa5b7f5398a01d689d9  71-oriole-haptics.rules
+78e6d20f437bfb557040d94d63aae7e422e2eb0d8799807b95cdda107533b0c17a94d2d07bf8daa53600b3658894220db919bf3f6bb07125cd4fc75616d08169  oriole-haptics-cal
+a19369fa0c69e0b2b09be153f62fcf4aeaaf05b6f972f075bc5e40d49d06112fa426bee498aa2be6049b983a43fa57e5ebdb2a088f523715ceae75f47e91c389  oriole-haptics-cal.service
+aceaf692bd4c54d79d5c8572e24057551a9a34dadaef857ec1d78f1af3ee4acd61e089f88394ed97147e92739579cc29a75ee9e96b578e53e9d29d8878e4ff0c  oriole-audio.modprobe
+fbc373fd474cd3b28d4268766d14be7795477cbd9868f3faafafbb15c6b53b35e0a78eab79274da1242e2b5a4cb9be05fea357f675d57dcd168ee9c5cabb1737  90-oriole-audio.rules
+4ad1287591de0f0a7bfd73fc96ed6de299366d69afe03b9320c922b4ada80098a9634b0fed8420f45a17dc5d8e8d01f20b166dde81b66a3e0ff29280bff4693d  google-oriole-aoc.conf
+0c62686e707e9129fd3f03c81ba7b24d1bd8e4715670db2437db278a78a18d863eca00dc921059aedd93f7e1208b3628f3f114e7a3df0dd1ef3e98798d0c5859  oriole-speaker-path.conf
+58f7888c5d8f1606897637b4cc3970cad2feee35db7e0c62445537ec3cb56aeb6663e4a9fe614aba08fc20f8a61e2490c47017de73583ca3497baa2be0b619d8  oriole-alsa-restore.conf
+bac2df8dee70f0247c1031d56cb97b793f03ff953fe6c3eee70d17d662a534fc5875c8aa03882d408ca9e30a730f7140aa70b34b13c3e779473ac9b045834b42  oriole-speaker.pa
+eb5e5127dcce78de58778ef48b6b57e9f5a7edd859e82ac353f9e675ddbf42b8a4c668efca3c54aff1eb97674f12f5ad3feaadb4216245d55f61661268c55774  oriole-pulse-speaker
+204e8b080ccf157ad6851ff5a342bb81f8c0c3b535036dbc367cd665e4fba111a925826266587352197d7b23ecab657146535af06268db199487c5cd7f324355  oriole-pulse-speaker.service
+d71de9159d99532aea2e00f5dc5f31da3ee8721edb51c881eb473ce9ea3037783d7b49ac5aed6ccceafa05436c626f1698394ae12e4cddd63b8f61513b92d9ab  90-oriole-aoc.wireplumber.conf
+7e280f5ba0ad0df469251deb3a01e7b76d79dcd8432481a12ffd14ee02599d0567b23e761c4f391c7386c8b932677d6de194b4b474e52d2b80bd746c5ca753bf  90-oriole-flatpak-gl.conf
+10b1da32525ff148389f8f46224d93e57a4f184a3fe363734065320377bdaa289dbb11fa02a6f2fa8d47758d67ba9dfab543933148ff873143fe2872d4bfa3fd  oriole-cpufreq-ratelimit.service
+a5a6b075da82fd7cc4ee4971dc8d5558c4449573d1bcd54c2bbba8e6392e16669705c4430833a2888c7b31735ae1990d0d946457144ce874d58042c4a00874ca  90-oriole-sched.conf
+04f5c2ddd125f7a404116ac3cc0f3897f0733a76b7c9b957eae06d72281eedca50aa6445c7d03ca70991b4fb5dbff22ff430f79900d0d8048d3c64c45f666391  90-oriole-lockup.conf
+07b265700e9ba72aad5803986cc7a0f5134dde6fddb5da79159b51ff2bc962dc056e2fa91bb18ae469bb624d4f6fc9e84f11f492d3cc0eedc8d47f33a949f4ba  oriole-waydroid-netfilter.conf
+bc85ec0b98d0648c51df15131f05dacb1ff6bfa1861eb16b1c6ffb6852e7952f57767043089d2f2010039f0ec628e5f5a2ee5ec1e82a01effa0911943b638296  oriole-ui-uclamp
+657b907daedba842b3e4cbf5cade103425541cef7fadc2ba52e5a23bc6b3d303ba66a188335b96a0ce276a243e454b0e16c3c8f1c4f3b92dd4570e61f13a5f90  oriole-ui-uclamp.service
+a44957d3bc7bde8348fe52e63f5a0cc328f994c9abc31cdab2bb5f9c6d8e0cb990f8664be9815a446f700751263c367623ffd246734a0f8bf1c0cf54e6d17b09  ucm2-aoc-snd-card.conf
+6b95ffb8f177ca0ed1b271bb7cf1c3746e1880a90fcda6c6ea11b0e839e3479f7dfa33eb66ac340f0b5f071cce788561bf8e35989e21fa8971d028b77eb64794  ucm2-oriole-HiFi.conf
+2d490c2a2ddd776b0bd64fbaa380bbe8dd6934d656b7d4b03a6e28151b914f8350f7ecaedc705784fed54e537f110a0943e9e9a301cfa489462556a6ab606a00  ucm2-oriole-VoiceCall.conf
+73b163da35f83452f17bde2785e9557fa45d6e1ae7e33e83b49c75400dd594d3d8eabeaf40d0c2d421c1afb01fdbe6db2290344aecea1b22bc27ac325b033250  oriole-camera.modules-load
+6327c59a0712f31469729f4019ceb5d23fc4296c3ff71839803facd3a127381ebbd9bbf0ef6c5412fce78cfd7073537d2d5aac94e6230881ba9b0ab25bf95fa9  90-oriole-camera.rules
+00b879aae861f8d9f314d626af487b3e82e69c346f94783db465604286d9a2c904d0e79572ad26545d80799987cda7b89896f408d87e42a0fd050b148966775b  90-oriole-camera.wireplumber.conf
+aa9834a7f3cb9c72301dc6d5e3402bd99217c77c688cca8269b57edf384d5055751de49ebcab0b3be571f11f90c41eda689e07ac59efdaa0f6ed7dcd439b4879  oriole-camera.modprobe
+77991d4324d3c80b860d089bf138fde9906c617dd704c9096c1d1a5a482de10f3c3f2dda77dc6fbdec277f6079d144638cd973dda6ff085d5a58b0deaa137920  80-device-google-oriole.preset
+"

@@ -1,0 +1,19 @@
+Subject: [PATCH] arm64: dts: gs101-pixel: fuel gauge is supplied by the max77759 charger
+
+Local only (not for upstream). Without a supplier link max17042 reports
+POWER_SUPPLY_STATUS_UNKNOWN, so UPower/Plasma never show charging.
+---
+--- a/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi	2026-10-08 14:12:14.736472471 -0500
++++ b/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi	2026-10-08 14:12:14.749900086 -0500
+@@ -1209,9 +1209,10 @@
+ 		interrupts-extended = <&gpa9 3 IRQ_TYPE_LEVEL_LOW>;
+ 
+ 		shunt-resistor-micro-ohms = <5000>;
++		power-supplies = <&max77759_pmic>;
+ 	};
+ 
+-	pmic@66 {
++	max77759_pmic: pmic@66 {
+ 		compatible = "maxim,max77759";
+ 		reg = <0x66>;
+ 

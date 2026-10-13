@@ -1,0 +1,27 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: gs101: pcie0 max-link-speed 1
+
+The modem link trains at Gen1 only; a Gen3 limit adds a 100 ms sleep after
+every relink (one per CP wakeup), long enough for the CP to drop its side
+of the link now and then and crash. Local.
+---
+--- a/arch/arm64/boot/dts/exynos/google/gs101.dtsi
++++ b/arch/arm64/boot/dts/exynos/google/gs101.dtsi
+@@ -1808,7 +1808,16 @@
+ 			ranges = <0x82000000 0 0x40000000 0x40000000 0 0x00ff0000>;
+ 			bus-range = <0x00 0xff>;
+ 			num-lanes = <2>;
+-			max-link-speed = <3>;
++			/*
++			 * The s5123 link only ever trains to Gen1 with this
++			 * PHY setup, and with a higher limit
++			 * dw_pcie_wait_for_link() sleeps another 100 ms after
++			 * link-up (PCIe r6.0 6.6.1, > 5 GT/s) on every CP
++			 * wakeup; a CP left waiting that long sometimes drops
++			 * its side of the link, the relink then never detects
++			 * the endpoint and the CP crashes. Local.
++			 */
++			max-link-speed = <1>;
+ 			interrupts = <GIC_SPI 472 IRQ_TYPE_LEVEL_HIGH 0>;
+ 			interrupt-names = "msi";
+ 

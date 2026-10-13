@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT
+# Local: make s2idle the default for anything writing "mem" to
+# /sys/power/state directly; deep suspend never resumes (see 90-s2idle.conf).
+w /sys/power/mem_sleep - - - - s2idle

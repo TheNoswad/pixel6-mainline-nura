@@ -1,0 +1,407 @@
+# Local-only build of M8's gs101 tree (github.com/m8l8th814n-eng/gs101-mainline).
+# Not for upstream submission.
+maintainer="Ingo Reitz <9l@9lo.re>"
+pkgname=linux-postmarketos-gs101
+pkgver=7.2.0_rc3
+pkgrel=33
+pkgdesc="Google gs101 (Pixel 6 Series) kernel, M8 gs101-mainline tree"
+arch="aarch64"
+_carch="arm64"
+_flavor="postmarketos-gs101"
+url="https://github.com/m8l8th814n-eng/gs101-mainline"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps pmb:cross-native"
+makedepends="
+	bison
+	clang
+	findutils
+	flex
+	lld
+	llvm
+	lz4
+	openssl-dev
+	perl
+	python3
+	zstd
+"
+
+# Source
+_commit="850061c79264d018317e9f849701f165e138e20c"
+_config="config-$_flavor.$arch"
+source="
+	$pkgname-$_commit.tar.gz::https://github.com/m8l8th814n-eng/gs101-mainline/archive/$_commit.tar.gz
+	$_config
+	0001-max77759-charger-default-usb-current.patch
+	0002-max77759-charger-enable-at-shutdown.patch
+	0003-gs101-pixel-fg-supplied-by-charger.patch
+	0004-exynos-pmu-keep-c2-hint-in-s2idle.patch
+	0005-bcmdhd-wait-for-timed-wakelocks-in-suspend.patch
+	0006-cs35l41dna-start-cspl-after-pll-lock.patch
+	0007-gs101-cool-all-cpu-clusters.patch
+	0008-gs101-gpu-dvfs-acpm.patch
+	0010-bcmdhd-remove-dynamic-cpuhp-state.patch
+	0011-clk-gs101-skip-mifmirror-queue-save-restore.patch
+	0012-pcie-gs101-longer-relink-wait.patch
+	0013-gs101-pcie0-max-link-speed-gen1.patch
+	0014-pcie-gs101-vendor-relink-tries-and-l2-entry.patch
+	0015-aoc-channel-dev-empty-list-doorbell.patch
+	0016-aoc-get-sensor-rails-lazily.patch
+	0017-panfrost-gs101-wait-for-cpufreq.patch
+	0018-bluetooth-btbcm-bcm4389c1-default-address.patch
+	0019-gs101-pixel-sink-9v-pd.patch
+	0020-gs101-mipi-csis-gpu-importable-stride.patch
+	0021-gs101-mipi-csis-wdma-ping-pong.patch
+	0022-gps-bcm47765-fix-teardown.patch
+	0023-gs101-pixel-gnss-ldos-always-on.patch
+	0024-gs101-pixel-gnss-spi-gpio-cs.patch
+	0025-gps-bcm47765-byte-words-fix-control.patch
+	0026-pcie-gs101-rearm-msi-after-demux.patch
+	0027-bcmdhd-restart-interface-on-hang.patch
+	0028-input-cs40l2x-haptics-driver.patch
+	0029-gs101-oriole-cs40l25a-haptics.patch
+"
+builddir="$srcdir/gs101-mainline-$_commit"
+
+# On top of M8's config: the DECON/DSI display stack in place of simpledrm,
+# the Tensor TMU so the big-core thermal zone can throttle, and a ramoops
+# console so a failed boot leaves a log in /sys/fs/pstore. nf_tables for
+# Nura's default nftables firewall, and zram (zstd) for postmarketos-zram-swap.
+# Waydroid: Android's netd needs policy routing (ip rule / per-network
+# tables; without it no default route is ever installed) and the xt
+# matches/targets plus cls_bpf from Android's base kernel config.
+# Lockup detectors that panic, plus an auto reboot, so silent freezes leave a
+# trace in ramoops (a forced power-off wipes it).
+# Scheduling like Android's gs101 kernel: uclamp (schedutil otherwise runs
+# every RT task, e.g. PipeWire's data loop and the panfrost/ufs IRQ threads,
+# at the cluster's max frequency; with uclamp the device package drops the RT
+# default boost and userspace can boost the UI instead), the TEO cpuidle
+# governor and the multi-gen LRU.
+# Cameras: M8's tree has the gs101 MIPI-CSIS receiver (raw Bayer through the
+# CSIS write-DMA, no ISP), its D/C-PHY, the IMX355 (front), S5KGN1 (rear) and
+# IMX386 (ultrawide) sensors, their SLG51000 PMIC, the LM3644 flash/torch and
+# the VL53L1X laser ranger; the DT nodes are already enabled. The SLG51000 is
+# switched on through S2MPG11 GPIOs, so it needs GPIO_S2MPG1X too. libcamera's
+# simple pipeline + SoftISP does the rest.
+_extra_config="
+CONFIG_DRM_GS101=m
+CONFIG_DRM_PANEL_SAMSUNG_S6E3FC3=m
+CONFIG_DRM_SIMPLEDRM=n
+CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y
+CONFIG_TENSOR_TMU=y
+CONFIG_CPU_THERMAL=y
+CONFIG_BATTERY_MAX17042=m
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_DRIVER_DEFERRED_PROBE_TIMEOUT=30
+CONFIG_NF_TABLES=m
+CONFIG_NF_TABLES_INET=y
+CONFIG_NF_TABLES_IPV4=y
+CONFIG_NF_TABLES_IPV6=y
+CONFIG_NFT_CT=m
+CONFIG_NFT_LOG=m
+CONFIG_NFT_LIMIT=m
+CONFIG_NFT_MASQ=m
+CONFIG_NFT_NAT=m
+CONFIG_NFT_REJECT=m
+CONFIG_NFT_REJECT_INET=m
+CONFIG_NF_REJECT_IPV4=m
+CONFIG_NF_REJECT_IPV6=m
+CONFIG_IP_NF_FILTER=m
+CONFIG_IP_NF_TARGET_REJECT=m
+CONFIG_IP_NF_NAT=m
+CONFIG_IP6_NF_IPTABLES=m
+CONFIG_IP6_NF_FILTER=m
+CONFIG_IP6_NF_TARGET_REJECT=m
+CONFIG_IP6_NF_NAT=m
+CONFIG_ZRAM=m
+CONFIG_ZRAM_BACKEND_ZSTD=y
+CONFIG_ZRAM_BACKEND_LZ4=y
+CONFIG_ZRAM_DEF_COMP_ZSTD=y
+CONFIG_CRYPTO_ZSTD=y
+CONFIG_PM_DEBUG=y
+CONFIG_PM_SLEEP_DEBUG=y
+CONFIG_BOOT_CONFIG=y
+CONFIG_BOOT_CONFIG_FORCE=y
+CONFIG_IP_ADVANCED_ROUTER=y
+CONFIG_IP_MULTIPLE_TABLES=y
+CONFIG_IPV6_MULTIPLE_TABLES=y
+CONFIG_IPV6_SUBTREES=y
+CONFIG_NF_CONNTRACK_MARK=y
+CONFIG_NETFILTER_XT_CONNMARK=m
+CONFIG_NETFILTER_XT_TARGET_CONNMARK=m
+CONFIG_NETFILTER_XT_MATCH_CONNMARK=m
+CONFIG_NETFILTER_XT_MATCH_SOCKET=m
+CONFIG_NETFILTER_XT_MATCH_STATISTIC=m
+CONFIG_NETFILTER_XT_MATCH_U32=m
+CONFIG_NETFILTER_XT_MATCH_PKTTYPE=m
+CONFIG_NETFILTER_XT_MATCH_POLICY=m
+CONFIG_NETFILTER_XT_MATCH_LENGTH=m
+CONFIG_NETFILTER_XT_MATCH_LIMIT=m
+CONFIG_NETFILTER_XT_MATCH_MAC=m
+CONFIG_NETFILTER_XT_MATCH_STRING=m
+CONFIG_NETFILTER_XT_MATCH_TIME=m
+CONFIG_NETFILTER_XT_MATCH_HELPER=m
+CONFIG_NETFILTER_XT_MATCH_IPRANGE=m
+CONFIG_NETFILTER_XT_MATCH_STATE=m
+CONFIG_NETFILTER_XT_MATCH_HASHLIMIT=m
+CONFIG_NETFILTER_XT_TARGET_TCPMSS=m
+CONFIG_NETFILTER_XT_TARGET_CT=m
+CONFIG_NETFILTER_XT_TARGET_TPROXY=m
+CONFIG_NETFILTER_XT_TARGET_NFQUEUE=m
+CONFIG_NETFILTER_XT_TARGET_CLASSIFY=m
+CONFIG_IP_NF_MATCH_RPFILTER=m
+CONFIG_IP6_NF_MATCH_RPFILTER=m
+CONFIG_IP_NF_MATCH_ECN=m
+CONFIG_IP_NF_MATCH_TTL=m
+CONFIG_IP6_NF_TARGET_MASQUERADE=m
+CONFIG_NET_CLS_BPF=m
+CONFIG_NET_ACT_BPF=m
+CONFIG_NET_CLS_U32=m
+CONFIG_NET_SCH_HTB=m
+CONFIG_INET_DIAG_DESTROY=y
+CONFIG_NET_KEY=y
+CONFIG_SOFTLOCKUP_DETECTOR=y
+CONFIG_HARDLOCKUP_DETECTOR=y
+CONFIG_HARDLOCKUP_DETECTOR_BUDDY=y
+CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC=1
+CONFIG_BOOTPARAM_HARDLOCKUP_PANIC=y
+CONFIG_DETECT_HUNG_TASK=y
+CONFIG_DEFAULT_HUNG_TASK_TIMEOUT=120
+CONFIG_PANIC_TIMEOUT=5
+CONFIG_UCLAMP_TASK=y
+CONFIG_UCLAMP_TASK_GROUP=y
+CONFIG_CPU_IDLE_GOV_TEO=y
+CONFIG_LRU_GEN=y
+CONFIG_LRU_GEN_ENABLED=y
+CONFIG_GPIO_S2MPG1X=m
+CONFIG_REGULATOR_SLG51000=m
+CONFIG_PHY_EXYNOS_MIPI_CSIS_GS101=m
+CONFIG_VIDEO_GS101_MIPI_CSIS=m
+CONFIG_VIDEO_IMX355=m
+CONFIG_VIDEO_S5KGN1=m
+CONFIG_VIDEO_IMX386=m
+CONFIG_VIDEO_LM3644=m
+CONFIG_VL53L1X_I2C=m
+# Pixel 6 haptics (CS40L25A), patch 0028
+CONFIG_INPUT_CS40L2X=m
+"
+
+# Samsung SysMMU v8. The DECON sits behind sysmmu_dpu0; without this driver
+# gs101-drm only binds after the deferred-probe timeout and cannot allocate
+# scanout buffers. Its Kconfig is not sourced from the main tree.
+_iommu_config="
+	CONFIG_SAMSUNG_IOMMU=m
+	CONFIG_SAMSUNG_IOMMU_GROUP=m
+"
+
+# Speaker audio (see aoc/info.txt in the tree): the AoC DSP plays to the
+# cs35l41 amps over TDM_0. AoC firmware is loaded through GSA and AoC talks
+# to the Trusty hwmgr, so trusty and gsa build first and aoc links against
+# their symbols. None of these Kconfigs are sourced from the main tree.
+_audio_config="
+	CONFIG_TRUSTY=m
+	CONFIG_TRUSTY_IRQ=y
+	CONFIG_TRUSTY_LOG=m
+	CONFIG_TRUSTY_VIRTIO=m
+	CONFIG_TRUSTY_VIRTIO_IPC=m
+	CONFIG_GSA=m
+	CONFIG_WC_MBOX=m
+	CONFIG_AOC_DRIVER=m
+	CONFIG_AOC_CHAR_DRIVER=m
+	CONFIG_AOC_CHAN_DRIVER=m
+	CONFIG_AOC_CONTROL_DRIVER=m
+"
+_audio_dirs="trusty gsa aoc cs35l41dna"
+
+# Broadcom BCM4775 GNSS on spi10 (see gps/Kbuild in the tree): exposes
+# /dev/ttyBCM and /dev/bbd_*, which the GNSS userspace talks to. The
+# receiver's LDOs are kept on by patch 0023, its chip select is a GPIO
+# (0024). Kconfig not sourced either.
+_gps_config="
+	CONFIG_BCM_GPS_SPI_DRIVER=m
+	CONFIG_BCM_GPS_PPS_DRIVER=m
+"
+
+# Shannon s5123 modem on pcie0 (see modem/Kbuild in the tree): M8's trimmed
+# cpif port. The CP itself is booted from userspace (tinycbd), so cpif is
+# blacklisted below and loaded by hand while this is being brought up.
+_modem_config="
+	CONFIG_EXYNOS_MODEM_IF=m
+	CONFIG_SHM_IPC=m
+	CONFIG_BOOT_DEVICE_SPI=m
+"
+
+# modpost rejects KBUILD_EXTRA_SYMBOLS files that do not exist yet, so only
+# aoc gets the trusty and gsa symbol tables.
+_audio_extra_symbols() {
+	[ "$1" = aoc ] || return 0
+	echo "$builddir/trusty/Module.symvers $builddir/gsa/Module.symvers"
+}
+
+prepare() {
+	default_prepare
+	cp "$srcdir/config-$_flavor.$CARCH" .config
+	echo "$_extra_config" >> .config
+
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 olddefconfig
+
+	# No Android WL_STATIC_IF placeholder wlan1: when it is bound and
+	# re-created, nl80211 calls on it oops in dhd_net2idx under rtnl.
+	sed -i '/^DHDCFLAGS += -DWL_STATIC_IF$/d' bcmdhd/Kbuild
+	if grep -q -- '-DWL_STATIC_IF' bcmdhd/Kbuild; then
+		error "WL_STATIC_IF still set in bcmdhd/Kbuild"
+		return 1
+	fi
+
+	# bcmdhd's Kbuild uses CONFIG_FIB_RULES as an "Android kernel" proxy for
+	# its debugability/HAL-dump flags. IP_MULTIPLE_TABLES (for Waydroid)
+	# selects FIB_RULES, which turned them on and broke the build
+	# (DHD_PKT_LOGGING_DBGRING without DHD_PKT_LOGGING). Keep the r16 flags.
+	sed -i 's/^ifneq (\$(CONFIG_FIB_RULES),)$/ifneq ($(BCMDHD_ANDROID_DEBUGABILITY),)/' bcmdhd/Kbuild
+	if grep -q 'CONFIG_FIB_RULES' bcmdhd/Kbuild; then
+		error "CONFIG_FIB_RULES still used in bcmdhd/Kbuild"
+		return 1
+	fi
+
+	# rmnet sits on the extended PDP channels (DT iod,ch = 181); without
+	# CH_EXTENSION exynos_ps_ch() only knows 1..10, so rmnet TX lands in the
+	# legacy raw ring the CP never drains and data calls pass no traffic.
+	grep -q -- '-DCONFIG_CH_EXTENSION=1' modem/Kbuild || \
+		sed -i 's/^ccflags-y += -DCONFIG_CP_PKTPROC_UL=1$/&\nccflags-y += -DCONFIG_CH_EXTENSION=1/' modem/Kbuild
+	if ! grep -q -- '-DCONFIG_CH_EXTENSION=1' modem/Kbuild; then
+		error "CONFIG_CH_EXTENSION not set in modem/Kbuild"
+		return 1
+	fi
+
+	local opt
+	for opt in DRM_GS101=m TENSOR_TMU=y BATTERY_MAX17042=m PCIE_GS101=y \
+			NF_TABLES=m NF_TABLES_INET=y NFT_CT=m NFT_REJECT_INET=m \
+			ZRAM=m ZRAM_BACKEND_ZSTD=y PM_SLEEP_DEBUG=y BOOT_CONFIG=y \
+			IP_MULTIPLE_TABLES=y IPV6_MULTIPLE_TABLES=y NF_CONNTRACK_MARK=y \
+			HARDLOCKUP_DETECTOR=y SOFTLOCKUP_DETECTOR=y PANIC_TIMEOUT=5 \
+			UCLAMP_TASK_GROUP=y CPU_IDLE_GOV_TEO=y LRU_GEN_ENABLED=y \
+			GPIO_S2MPG1X=m REGULATOR_SLG51000=m PHY_EXYNOS_MIPI_CSIS_GS101=m \
+			VIDEO_GS101_MIPI_CSIS=m VIDEO_IMX355=m VIDEO_S5KGN1=m \
+			VIDEO_IMX386=m VIDEO_LM3644=m VL53L1X_I2C=m INPUT_CS40L2X=m; do
+		grep -q "^CONFIG_$opt\$" .config || { error "CONFIG_$opt dropped by olddefconfig"; return 1; }
+	done
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-postmarketOS"
+
+	# Google's bcmdhd for the BCM4389 Wi-Fi (brcmfmac is blacklisted).
+	make -C "$builddir" M="$builddir/bcmdhd" \
+		BCMDHD_ROOT="$builddir/bcmdhd" modules \
+		ARCH="$_carch" LLVM=1
+
+	make -C "$builddir" M="$builddir/samsung-iommu" modules \
+		ARCH="$_carch" LLVM=1 \
+		$_iommu_config
+
+	make -C "$builddir" M="$builddir/modem" modules \
+		ARCH="$_carch" LLVM=1 \
+		$_modem_config
+
+	make -C "$builddir" M="$builddir/gps" modules \
+		ARCH="$_carch" LLVM=1 \
+		$_gps_config
+
+	local d
+	for d in $_audio_dirs; do
+		make -C "$builddir" M="$builddir/$d" modules \
+			ARCH="$_carch" LLVM=1 \
+			KBUILD_EXTRA_SYMBOLS="$(_audio_extra_symbols $d)" \
+			$_audio_config
+	done
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+
+	make Image.lz4 modules_install dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir"/boot/dtbs
+
+	make -C "$builddir" M="$builddir/bcmdhd" \
+		BCMDHD_ROOT="$builddir/bcmdhd" modules_install \
+		ARCH="$_carch" LLVM=1 \
+		INSTALL_MOD_PATH="$pkgdir"/usr INSTALL_MOD_STRIP=1
+
+	make -C "$builddir" M="$builddir/samsung-iommu" modules_install \
+		ARCH="$_carch" LLVM=1 \
+		$_iommu_config \
+		INSTALL_MOD_PATH="$pkgdir"/usr INSTALL_MOD_STRIP=1
+
+	make -C "$builddir" M="$builddir/modem" modules_install \
+		ARCH="$_carch" LLVM=1 \
+		$_modem_config \
+		INSTALL_MOD_PATH="$pkgdir"/usr INSTALL_MOD_STRIP=1
+
+	make -C "$builddir" M="$builddir/gps" modules_install \
+		ARCH="$_carch" LLVM=1 \
+		$_gps_config \
+		INSTALL_MOD_PATH="$pkgdir"/usr INSTALL_MOD_STRIP=1
+
+	local d
+	for d in $_audio_dirs; do
+		make -C "$builddir" M="$builddir/$d" modules_install \
+			ARCH="$_carch" LLVM=1 \
+			KBUILD_EXTRA_SYMBOLS="$(_audio_extra_symbols $d)" \
+			$_audio_config \
+			INSTALL_MOD_PATH="$pkgdir"/usr INSTALL_MOD_STRIP=1
+	done
+
+	rm -f "$pkgdir"/lib/modules/*/build "$pkgdir"/lib/modules/*/source
+
+	install -D "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+
+	install -Dm644 "$builddir/arch/$_carch/boot/Image.lz4" \
+		"$pkgdir/boot/vmlinuz"
+
+	mkdir -p "$pkgdir"/etc/modprobe.d
+	echo "blacklist brcmfmac" > "$pkgdir"/etc/modprobe.d/gs101-blacklist-brcmfmac.conf
+	echo "blacklist cpif" > "$pkgdir"/etc/modprobe.d/gs101-blacklist-cpif.conf
+}
+
+sha512sums="
+a1c0bc4d002edc99045205a6973049b580edd90e1431a87001dddacd526e49c567dd826c1e68e29c45d668c07d577e3418fcb4831b79e3961087704a24e4c025  linux-postmarketos-gs101-850061c79264d018317e9f849701f165e138e20c.tar.gz
+6180df506abc76566f445f14f5994204c48d5675e0593e33d443c6c03c3be7c0098242a81af42ff086ed9e2562fe70d2dc688f3accae8eb7326ca6c962063868  config-postmarketos-gs101.aarch64
+73632cf860b0e696dfc1e8449803d8a48073238202e147e1d90d935ef8e55f45e16669aaa56b8bc00560cda1399cfd158eea0b6f93abce96f14351a8d006a5a5  0001-max77759-charger-default-usb-current.patch
+fb0811ddf77f8918bc7ba6d0cdd484b2d85ee614e7f7bb402e66e799c7c2dc7d73942efc8ca86c2ba2ce0ed9cd1caa42b6958d54ecad5590588fe26df6c796dc  0002-max77759-charger-enable-at-shutdown.patch
+332a1b34811aff722b01e7f1bcb0484819c333ccc9c4e6d02dd569ff03e8242c300e2af73671d6417f664da01a5601429b7437bd29e41fd82d596abe2a89f6e1  0003-gs101-pixel-fg-supplied-by-charger.patch
+c09ca20757f3e05057fd1e63407511896c0331a1fd0e4b84ed0a536aa2e45fae5ab4ca956979d36e2b8e323322307750f834eea880550fdb21c6292bff0420fb  0004-exynos-pmu-keep-c2-hint-in-s2idle.patch
+fdeec6b9339dcd50f40bc75f3fc718407b00ff89ebfca75d60d7d765ecd005eefefc4d1d429f3e5f654c7ab04ec42a814adc3a7201efaf9ba3ef11bf0bcdde56  0005-bcmdhd-wait-for-timed-wakelocks-in-suspend.patch
+676ed2fb10febec96636d61bdc96ea9c18b696b1a05f929f5b6013d7c080539dfbd53952a226b07c3be24786d94d5e794c1cdc3e6ec7d9ba4c9eeb31c5aaa0cd  0006-cs35l41dna-start-cspl-after-pll-lock.patch
+2dc54945a265f5d7a5585a08adc9b4abf62402d8ee03b505956b7a00f44491ea0ad8c634324b9cbec46369e2c8fe6116023cb1e2fc88928f755390cdcc5b7e24  0007-gs101-cool-all-cpu-clusters.patch
+77ca4259b59516c6ffb5e7099a999ca4c19afe409544bdb382d71561e57111c43d29a7917e222025300d504bd98db1be3bbff378ae8c3c7e4cf45dd4643a6852  0008-gs101-gpu-dvfs-acpm.patch
+68323175de355ba3277252ee68ca0ad7ac9dfe41745ed8a621f386c75179559e55519b4be7bb13e53b8eb7fa61783d243706f555f8a55b66e199cafa3bf4dbed  0010-bcmdhd-remove-dynamic-cpuhp-state.patch
+615a1238d19c20cd250bdf7d9aea15a8fd78c876950dda84fa7557e757555cc45cae4eeba25ed531a2c3ff36520c6bc5a478dee1bdf58bfd56de7e7111e6c344  0011-clk-gs101-skip-mifmirror-queue-save-restore.patch
+3407204dd2611fae0672a3c5a59a91a8132266248e8790ebe2385bddb59fcaebf2007a0632c1e5ab7184920d3a811df53ee0795990d590ffdc9060a0eb70fd0c  0012-pcie-gs101-longer-relink-wait.patch
+e315c8c02f5020bef0879721ff16c6d18e600316d1b2faa700916cd4fdf31ef91600444a2e5443a3c051433b9d6445af1ef7756d79480d20b71a19c71dfbb792  0013-gs101-pcie0-max-link-speed-gen1.patch
+b3a20fbbbed1f96d7c5ebba281fe6392412a0d469421f66831e5b901341e7b2cd0de5b1d514ceca0a82c706440e5c88fd84fe4d0f85510ba9b9aa179c98a22e7  0014-pcie-gs101-vendor-relink-tries-and-l2-entry.patch
+d77d36586e74a670738db3bef9a834343cf8f345e5c9955e8fefac60eee332bfc3b2c0a657de4669208550633a954a9f617a4e4541d7d16e4ce02dc550a32d26  0015-aoc-channel-dev-empty-list-doorbell.patch
+c2a10e9f2257463bf16485345ee2da6f88a6ec9d764ca1816bd0226b6f8aee2ea0fbfdebf7d99224eee161b799d28b3933b14184661774f6a3537dab73459c80  0016-aoc-get-sensor-rails-lazily.patch
+dd9bee7be27250cdca5229e8a392ca1d9569822f8fc4699c589e1deae97b63947d116e41392d377e089d7be2f5695f8abc52712f7f9402289032389132bc39b0  0017-panfrost-gs101-wait-for-cpufreq.patch
+3411b85ac337e0a20ef46e7311c9b38447b29bd4b68fb2f78a7ec48a0c9c92c4be556d4fcfe9d1f893e2c7523794e629384d521ff57ddf25d4c47e07828d9956  0018-bluetooth-btbcm-bcm4389c1-default-address.patch
+a346aae23e7c6e34f7df09f0f6578735420b3b7c269ff3f10491f287bcda797409a718de1a3a2c3145b5023b5b8e646bc3531b748c03d2fda15fde81f1911a0e  0019-gs101-pixel-sink-9v-pd.patch
+295c84233e93881df95dbd93e1b3e66b5a82824e265a6eaf6a8fa865fdfec197570563c40e3fd1a24c2938f4dfc885d42d0df17e910fa91375ec1bee6b25f8bf  0020-gs101-mipi-csis-gpu-importable-stride.patch
+512c07b13ebdcfb5a5f3bbbd59e37df8aa11cf4b2ca9fdf499c3d801ccfc4e4349e1db86f12d04d508e9145d7c6a7da0601f85c9e4458aa34468fce17898212b  0021-gs101-mipi-csis-wdma-ping-pong.patch
+dfcf86ce00c590398f83dc39acf413f27fb612162b2bdfb89b12cbd2443c9a8a0deb92b8630c875f90a16bf5bbe10bb5392a8d4ce3592995183e1116f39dbd90  0022-gps-bcm47765-fix-teardown.patch
+2533280912f8af98972a666a657cb58f4bd9a8daa789295c7b7ad9fbc70108fa4129a2113308efc6094310dbc27e7a4873ba8086373bbc0e84bf5cef1b6f89b5  0023-gs101-pixel-gnss-ldos-always-on.patch
+c9c0b2e5bd65302df2d6f83605e200afeb79823d918d8a9ef6ba70e617d714b4d3d37b4aab3015849afe946ab6e19f8a18583bd8a7712a2b4ea0bee9e20ccedf  0024-gs101-pixel-gnss-spi-gpio-cs.patch
+5807b9156cab8efffaa20aacefd981aa493cb31b9c5a3e8646ea817bb68a3602f18ff3611ab1d8059b83d18a431ab9b7627e14c6de3e1ff005424f896ca9fb6a  0025-gps-bcm47765-byte-words-fix-control.patch
+72ac30c3734d6555af0833fbe0720de95a278954ee815b64c874b36df87995be8e1d264b00818053ac54f6d04bfd0fa473fe972163c832735692b115b7e385fb  0026-pcie-gs101-rearm-msi-after-demux.patch
+4fdf06e480444b95856acb6dbeb437103e58f6401c814a9bf9d46480e092f59048aca7ce28ce1005ca784411ec4c616e0c976b5c9af5baa4b3f9271be9721e59  0027-bcmdhd-restart-interface-on-hang.patch
+1b9dc38fd73864956410335614c07fdbfe54035cbb99d69e7e92b475f125729ad47f6eba738df54dc26f652900f246a64f8d5ae308ed894daa3ae403de3ec033  0028-input-cs40l2x-haptics-driver.patch
+8b2f8c2386f5baa3b319d532f08676ea2c8e895f8f4f8dd72681704baeab56844a9ea76c0133f311f3fc5129a79f17ed69242235606155d8180c31523919cfe5  0029-gs101-oriole-cs40l25a-haptics.patch
+"

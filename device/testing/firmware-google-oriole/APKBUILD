@@ -1,0 +1,139 @@
+# Firmware for the Google Pixel 6 (oriole), taken at build time from Google's
+# factory image (vendor.img inside the image zip). Nothing proprietary is
+# stored in this repository and the built packages must not be
+# redistributed: build them yourself. Per-phone calibration is not in here,
+# it is read from the phone's own persist partition at runtime (see
+# device-google-oriole, /run/oriole/persist).
+pkgname=firmware-google-oriole
+pkgver=20260405
+pkgrel=1
+_build=cp1a.260405.005
+_zip=oriole-$_build-factory-8081a8ba.zip
+pkgdesc="Google Pixel 6 firmware from the factory image"
+url="https://developers.google.com/android/images"
+arch="aarch64"
+license="proprietary"
+depends="
+	$pkgname-audio
+	$pkgname-bt
+	$pkgname-gnss
+	$pkgname-haptics
+	$pkgname-sensors
+	$pkgname-wifi
+	"
+makedepends="bcm4776-gnssd-fwcut e2fsprogs-extra python3"
+# no pmb:cross-native: bcm4776-gnssd-fwcut is only built for aarch64
+options="!check !strip !archcheck !tracedeps"
+subpackages="
+	$pkgname-audio:audio
+	$pkgname-bt:bt
+	$pkgname-gnss:gnss
+	$pkgname-haptics:haptics
+	$pkgname-sensors:sensors
+	$pkgname-wifi:wifi
+	"
+source="$_zip::https://dl.google.com/dl/android/aosp/$_zip"
+builddir="$srcdir/vendor"
+
+# speaker amp DSP files: vendor name -> name the cs35l41 driver asks for
+# (cirrus/<part>-dsp1-<fw>-<system_name>[-<prefix>], "r" on the right amp)
+_amp="prot cali diag"
+
+# the factory zip holds the image zip, which holds vendor.img: only that is
+# extracted (no unzip of the 3.5 GB archive)
+unpack() {
+	mkdir -p "$builddir"
+	python3 - "$srcdir/$_zip" "$srcdir/vendor.img" <<-'EOF'
+		import shutil, sys, zipfile
+		outer = zipfile.ZipFile(sys.argv[1])
+		inner = [n for n in outer.namelist() if "/image-oriole-" in n][0]
+		with zipfile.ZipFile(outer.open(inner)) as z:
+		    with z.open("vendor.img") as i, open(sys.argv[2], "wb") as o:
+		        shutil.copyfileobj(i, o, 1 << 20)
+	EOF
+}
+
+_dump() {	# <path in vendor.img> <output file>
+	mkdir -p "$(dirname "$2")"
+	debugfs -R "dump $1 $2" "$srcdir"/vendor.img 2>/dev/null
+	[ -s "$2" ] || die "$1 not found in vendor.img"
+}
+
+build() {
+	local f x
+	for f in aoc.bin fw_bcmdhd.bin fw_bcmdhd.map bcmdhd.cal bcmdhd_clm.blob \
+		cs40l20.bin cs40l25a_clab.wmfw cs40l25a_clab.bin \
+		cs40l25a_cal.wmfw cs40l25a_cal.bin cs40l25a_par.wmfw cs40l25a_par.bin; do
+		_dump /firmware/$f fw/$f
+	done
+	for f in BCM.hcd BTFW_B.hcd BTFW_D.hcd; do
+		_dump /firmware/brcm/$f fw/brcm/$f
+	done
+	for x in $_amp; do
+		_dump /firmware/cs35l41-dsp1-spk-$x.wmfw \
+			fw/cirrus/cs35l41-dsp1-spk-$x-oriole.wmfw
+		_dump /firmware/cs35l41-dsp1-spk-$x.bin \
+			fw/cirrus/cs35l41-dsp1-spk-$x-oriole.bin
+		_dump /firmware/R-cs35l41-dsp1-spk-$x.bin \
+			fw/cirrus/cs35l41-dsp1-spk-$x-oriole-r.bin
+	done
+	_dump /etc/sensors/registry/oriole_dvt.reg reg/oriole_dvt.reg
+	_dump /etc/sensors/registry/append/motion_state.reg reg/motion_state.reg
+
+	# GNSS: SensorHub.patch as is, only the ESW patch is cut out of the
+	# stock daemon
+	_dump /firmware/SensorHub.patch gnss/firmware/SensorHub.patch
+	_dump /bin/hw/gpsd gnss/bin/hw/gpsd
+	bcm4776-fwcut gnss fw
+}
+
+package() {
+	mkdir -p "$pkgdir"
+}
+
+audio() {
+	pkgdesc="Google Pixel 6 AoC DSP and CS35L41 speaker amp firmware"
+	replaces="firmware-google-oriole-audio-local"
+	install -Dm644 "$builddir"/fw/aoc.bin -t "$subpkgdir"/lib/firmware
+	install -Dm644 "$builddir"/fw/cirrus/* -t "$subpkgdir"/lib/firmware/cirrus
+}
+
+bt() {
+	pkgdesc="Google Pixel 6 BCM4389 Bluetooth firmware"
+	replaces="firmware-google-oriole-bt-local"
+	install -Dm644 "$builddir"/fw/brcm/*.hcd -t "$subpkgdir"/lib/firmware/brcm
+}
+
+gnss() {
+	pkgdesc="Google Pixel 6 BCM4776 GNSS firmware for bcm4776-gnssd"
+	replaces="firmware-google-oriole-gnss-local"
+	install -Dm644 "$builddir"/fw/SensorHub.patch \
+		"$builddir"/fw/gll-patch-4776_A0.bin \
+		-t "$subpkgdir"/lib/firmware/brcm/bcm4776
+}
+
+haptics() {
+	pkgdesc="Google Pixel 6 CS40L25A haptics firmware"
+	# clab: normal operation; cal, par: the driver's calibration and
+	# parameter modes
+	install -Dm644 "$builddir"/fw/cs40l20.bin "$builddir"/fw/cs40l25a_*.wmfw \
+		"$builddir"/fw/cs40l25a_*.bin -t "$subpkgdir"/lib/firmware
+}
+
+sensors() {
+	pkgdesc="Google Pixel 6 sensor registry (AoC USF) from the factory image"
+	install -Dm644 "$builddir"/reg/*.reg \
+		-t "$subpkgdir"/usr/share/firmware-google-oriole/sensors
+}
+
+wifi() {
+	pkgdesc="Google Pixel 6 BCM4389 Wi-Fi firmware for bcmdhd"
+	replaces="firmware-google-oriole-wifi-local"
+	install -Dm644 "$builddir"/fw/fw_bcmdhd.bin "$builddir"/fw/fw_bcmdhd.map \
+		"$builddir"/fw/bcmdhd.cal "$builddir"/fw/bcmdhd_clm.blob \
+		-t "$subpkgdir"/lib/firmware
+}
+
+sha512sums="
+fc47746e37cd449f4b79599f548e9a84426e4d7f297b886934515ad075860ddf36f1859c074f1885dcdef44456b2a9558cbc0d20edd30f81f6454c010e668a78  oriole-cp1a.260405.005-factory-8081a8ba.zip
+"

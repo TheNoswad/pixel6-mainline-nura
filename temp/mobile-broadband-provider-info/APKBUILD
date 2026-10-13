@@ -1,0 +1,39 @@
+# Forked from Alpine for a local patch (Nura on the Pixel 6): Mint Mobile
+# SIMs report operator ID 310240, which the Mint entry lacked, so mmsd-tng
+# could not find its MMSC. 9999 keeps Alpine from replacing it; rebase by
+# hand when Alpine moves on.
+# Contributor: Francesco Colista <fcolista@alpinelinux.org>
+maintainer="Achill Gilgenast <achill@achill.org>"
+pkgname=mobile-broadband-provider-info
+_pkgver=20251101
+pkgver=9999$_pkgver
+pkgrel=0
+pkgdesc="Mobile broadband settings for various service providers"
+url="https://gitlab.gnome.org/GNOME/mobile-broadband-provider-info/"
+arch="noarch"
+license="CC-PDDC"
+makedepends="libxml2-utils libxslt meson"
+# not using the CI release process: https://gitlab.gnome.org/GNOME/mobile-broadband-provider-info/-/merge_requests/139
+source="https://gitlab.gnome.org/GNOME/mobile-broadband-provider-info/-/archive/$_pkgver/mobile-broadband-provider-info-$_pkgver.tar.gz
+	0001-us-Mint-Mobile-add-310-240.patch
+	"
+builddir="$srcdir/mobile-broadband-provider-info-$_pkgver"
+#source="https://download.gnome.org/sources/mobile-broadband-provider-info/$pkgver/mobile-broadband-provider-info-$pkgver.tar.xz"
+
+build() {
+	abuild-meson . output
+	meson compile -C output
+}
+
+check() {
+	meson test -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+sha512sums="
+008376186cc19e3223ab09b049aa2f87c7a1473f91eef2d9f39d52e6b27c9b88c2f0a711b8afdf77e010cc0d36d13f4c4ea84cccc795cd0c334a22c79e6f135f  mobile-broadband-provider-info-20251101.tar.gz
+697f85cdeb78e42a238e56449366d6f28454d16060d1ac91d94ee5d34ccef63c4ae2f027f0577658b158c8eaff32fff9ec418737b63a99f7b5b58601edd45f08  0001-us-Mint-Mobile-add-310-240.patch
+"

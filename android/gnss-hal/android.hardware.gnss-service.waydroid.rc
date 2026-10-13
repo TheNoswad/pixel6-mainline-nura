@@ -1,0 +1,5 @@
+# AIDL GNSS HAL fed by the host's NMEA socket (see gnss-waydroid.cpp)
+service vendor.gnss-waydroid /vendor/bin/hw/android.hardware.gnss-service.waydroid
+    class hal
+    user gps
+    group gps

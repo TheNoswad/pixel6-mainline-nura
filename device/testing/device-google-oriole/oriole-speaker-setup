@@ -1,0 +1,86 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Local (oriole): bring up the speakers the way stock mixer_paths.xml does:
+# TDM_0 routing, CS35L41 Protection DSP firmware with this phone's factory
+# calibration, PCM Source=DSP. Amps are enabled only after the calibration
+# reads back correctly; on any failure they stay off.
+#
+# The halo DSP first runs at the first playback through the amps, so the
+# CAL_* values must be written before the amps are enabled (playback cannot
+# power the DSP while "Main AMP Enable Switch" is off). Do not set
+# "Firmware Reload Tuning": the next stop sends STOP_PRE_REINIT and the
+# REINIT after it is never acknowledged by this firmware.
+C=0
+CAL=/run/oriole/persist/audio/speaker.cal
+FAIL=0
+
+log() { echo "oriole-speaker-setup: $*"; }
+s() { amixer -c$C -q cset name="$1" "$2" >/dev/null 2>&1 || { log "failed: $1 = $2"; FAIL=1; }; }
+g() { amixer -c$C cget name="$1" 2>/dev/null | sed -n 's/.*: values=//p'; }
+has() { amixer -c$C cget name="$1" >/dev/null 2>&1; }
+be() { printf '0x%02x,0x%02x,0x%02x,0x%02x' $(( ($1>>24)&255 )) $(( ($1>>16)&255 )) $(( ($1>>8)&255 )) $(( $1&255 )); }
+wait_ctl() {
+	local i
+	for i in $(seq "$2"); do has "$1" && return 0; sleep 1; done
+	log "timed out waiting for control '$1'"
+	exit 1
+}
+
+# speaker.cal: one 24-byte record per amp (L, R), u32 LE: CAL_R, CAL_STATUS,
+# CAL_CHECKSUM, CAL_AMBIENT, AMP PCM Gain, Digital PCM Volume
+set -- $(od -An -tu4 -v "$CAL")
+if [ $# -ne 12 ] || [ "$2" != 1 ] || [ "$8" != 1 ]; then
+	log "bad calibration file $CAL"
+	exit 1
+fi
+L_R=$1 L_ST=$2 L_CK=$3 L_AMB=$4 L_GAIN=$5 L_VOL=$6
+R_R=$7 R_ST=$8 R_CK=$9 R_AMB=${10} R_GAIN=${11} R_VOL=${12}
+
+# the AoC card comes up when the AoC firmware is online, the amp controls
+# when both cs35l41 have bound
+wait_ctl "R Main AMP Enable Switch" 120
+
+s "Main AMP Enable Switch" 0;  s "R Main AMP Enable Switch" 0
+s "TDM_0_RX Chan" Four;        s "TDM_0_TX Chan" Four
+s "TDM_0_RX Format" S32_LE;    s "TDM_0_TX Format" S32_LE
+s "ASPRX1 Slot Position" 0;    s "ASPRX2 Slot Position" 1
+s "R ASPRX1 Slot Position" 1;  s "R ASPRX2 Slot Position" 0
+s "DSP RX1 Source" ASPRX1;     s "R DSP RX1 Source" ASPRX1
+s "DSP RX2 Source" ASPRX1;     s "R DSP RX2 Source" ASPRX1
+s "ASP TX1 Source" VMON;       s "ASP TX2 Source" IMON
+s "R ASP TX1 Source" VMON;     s "R ASP TX2 Source" IMON
+# stock "speaker" path
+s "Boost Peak Current Limit" 1.70A;  s "R Boost Peak Current Limit" 1.90A
+s "Digital PCM Volume" "$L_VOL";     s "R Digital PCM Volume" "$R_VOL"
+s "AMP PCM Gain" "$L_GAIN";          s "R AMP PCM Gain" "$R_GAIN"
+# speaker endpoint EP6 (hw:0,5, deep buffer) and EP1 onto TDM_0
+s "TDM_0_RX Mixer EP1" on
+s "TDM_0_RX Mixer EP6" on
+
+s "DSP1 Firmware" Protection;  s "R DSP1 Firmware" Protection
+s "DSP1 Preload Switch" 1;     s "R DSP1 Preload Switch" 1
+wait_ctl "DSP1 Protection cd CAL_R" 20
+wait_ctl "R DSP1 Protection cd CAL_R" 20
+
+s "DSP1 Protection cd CAL_R"          "$(be $L_R)"
+s "DSP1 Protection cd CAL_STATUS"     "$(be $L_ST)"
+s "DSP1 Protection cd CAL_CHECKSUM"   "$(be $L_CK)"
+s "DSP1 Protection cd CAL_AMBIENT"    "$(be $L_AMB)"
+s "R DSP1 Protection cd CAL_R"        "$(be $R_R)"
+s "R DSP1 Protection cd CAL_STATUS"   "$(be $R_ST)"
+s "R DSP1 Protection cd CAL_CHECKSUM" "$(be $R_CK)"
+s "R DSP1 Protection cd CAL_AMBIENT"  "$(be $R_AMB)"
+s "PCM Source" DSP;            s "R PCM Source" DSP
+
+if [ "$(g 'DSP1 Protection cd CAL_R')" != "$(be $L_R)" ] ||
+   [ "$(g 'R DSP1 Protection cd CAL_R')" != "$(be $R_R)" ] ||
+   [ "$(g 'PCM Source')" != 1 ] || [ "$(g 'R PCM Source')" != 1 ]; then
+	FAIL=1
+fi
+if [ $FAIL != 0 ]; then
+	log "setup incomplete, leaving the amps off"
+	exit 1
+fi
+
+s "Main AMP Enable Switch" 1;  s "R Main AMP Enable Switch" 1
+log "speakers ready: Protection firmware, CAL_R L=$L_R R=$R_R, PCM Source=DSP"

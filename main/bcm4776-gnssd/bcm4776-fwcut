@@ -1,0 +1,108 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Collect the BCM4776 firmware bcm4776-gnssd needs from a stock Pixel 6
+vendor partition (your own device's image):
+
+  firmware/SensorHub.patch  copied as is (the chip's hub patch)
+  bin/hw/gpsd               only the embedded ESW patch is cut out of it
+
+usage: bcm4776-fwcut VENDOR_DIR [OUTDIR]   (default OUTDIR: .)
+       install OUTDIR/* to /lib/firmware/brcm/bcm4776/
+
+gpsd keeps one record per chip revision in .data (GetPatchInfoPike /
+GetPatchSegmentPike): u32 nsegments | pad | u64 -> segment table |
+u64 -> version string ("make-pike:...:4776_A0@543153_4776_A0"); segment
+table entries (0x18 bytes): u32 chip address | pad | u64 -> data |
+u32 size | pad. Pointers are link-time vaddrs, mapped through the ELF
+program headers.
+
+Output gll-patch-<chip>.bin: b'BCMGLLP1' | u16 siglen | sig | u32 n |
+n x (u32 addr | u32 size | data). Nothing else from gpsd is kept.
+"""
+import os
+import shutil
+import struct
+import sys
+
+CHIP = '4776_A0'
+
+
+def vaddr2off(elf, va):
+    phoff, = struct.unpack_from('<Q', elf, 0x20)
+    phentsize, phnum = struct.unpack_from('<HH', elf, 0x36)
+    for i in range(phnum):
+        typ, _, off, vad, _, filesz = struct.unpack_from('<IIQQQQ', elf, phoff + i * phentsize)
+        if typ == 1 and vad <= va < vad + filesz:
+            return va - vad + off
+    raise ValueError('vaddr 0x%x not in a PT_LOAD segment' % va)
+
+
+def off2vaddr(elf, off):
+    phoff, = struct.unpack_from('<Q', elf, 0x20)
+    phentsize, phnum = struct.unpack_from('<HH', elf, 0x36)
+    for i in range(phnum):
+        typ, _, o, vad, _, filesz = struct.unpack_from('<IIQQQQ', elf, phoff + i * phentsize)
+        if typ == 1 and o <= off < o + filesz:
+            return off - o + vad
+    raise ValueError('offset 0x%x not in a PT_LOAD segment' % off)
+
+
+def cut(elf, chip=CHIP):
+    if elf[:5] != b'\x7fELF\x02':
+        raise SystemExit('gpsd: not a 64-bit ELF file')
+    tag = b':' + chip.encode() + b'@'
+    s = elf.find(b'make-pike:')
+    while s >= 0:
+        e = elf.index(b'\0', s)
+        if tag in elf[s:e]:
+            ptr = struct.pack('<Q', off2vaddr(elf, s))
+            p = elf.find(ptr)
+            while p >= 0:
+                n, = struct.unpack_from('<I', elf, p - 0x10)
+                tab, = struct.unpack_from('<Q', elf, p - 0x8)
+                if 0 < n < 16 and tab:
+                    try:
+                        t = vaddr2off(elf, tab)
+                        segs = []
+                        for i in range(n):
+                            addr, dp, size = struct.unpack_from('<IxxxxQI', elf, t + i * 0x18)
+                            o = vaddr2off(elf, dp)
+                            segs.append((addr, elf[o:o + size]))
+                        return elf[s:e].decode(), segs
+                    except (ValueError, struct.error):
+                        pass
+                p = elf.find(ptr, p + 1)
+        s = elf.find(b'make-pike:', e)
+    raise SystemExit('gpsd: no %s patch record found' % chip)
+
+
+def main():
+    if len(sys.argv) not in (2, 3) or sys.argv[1].startswith('-'):
+        sys.exit(__doc__.split('\n\n')[2])
+    vendor = sys.argv[1]
+    out = sys.argv[2] if len(sys.argv) == 3 else '.'
+    os.makedirs(out, exist_ok=True)
+
+    patch = os.path.join(vendor, 'firmware', 'SensorHub.patch')
+    with open(patch, 'rb') as f:
+        t = f.read()
+    if b'<PatchAddress=' not in t or b'<Blob=' not in t:
+        sys.exit('%s: not a SensorHub patch' % patch)
+    shutil.copyfile(patch, os.path.join(out, 'SensorHub.patch'))
+    print('SensorHub.patch: %d bytes' % len(t))
+
+    with open(os.path.join(vendor, 'bin', 'hw', 'gpsd'), 'rb') as f:
+        sig, segs = cut(f.read())
+    name = 'gll-patch-%s.bin' % CHIP
+    with open(os.path.join(out, name), 'wb') as f:
+        f.write(b'BCMGLLP1' + struct.pack('<H', len(sig)) + sig.encode())
+        f.write(struct.pack('<I', len(segs)))
+        for addr, data in segs:
+            f.write(struct.pack('<II', addr, len(data)) + data)
+    print('%s: %s' % (name, sig.rsplit(':', 1)[-1]))
+    for addr, data in segs:
+        print('  0x%06x %6d bytes' % (addr, len(data)))
+
+
+if __name__ == '__main__':
+    main()

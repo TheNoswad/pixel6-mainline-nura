@@ -1,0 +1,17 @@
+# Local: PWRONSRC often still reads 0x04 (charger) after a warm reboot
+# while plugged in, including fastboot reboot after flashing. A charger
+# power-on always follows a power-off, so when the OS reboots (including
+# reboot bootloader) leave a marker; oriole-charger-detect then boots
+# normally once and removes it.
+[Unit]
+Description=Mark reboots so the next boot skips charger mode
+DefaultDependencies=no
+After=local-fs.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/bin/sh -c 'systemctl list-jobs | grep -q "reboot.target.*start" || exit 0; mkdir -p /var/lib/oriole-charger; touch /var/lib/oriole-charger/reboot-normal; sync'

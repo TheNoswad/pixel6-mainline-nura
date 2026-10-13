@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Unit]
+Description=Pixel 6 auto-brightness (ambient light from net.hadess.SensorProxy)
+Wants=oriole-sensorproxy.service
+After=oriole-sensorproxy.service
+
+[Service]
+ExecStart=/usr/libexec/oriole-autobrightness
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+# The phone's own factory calibration (speaker, haptics, sensors), read-only.
+# Units that need it use RequiresMountsFor=/run/oriole/persist.
+[Unit]
+Description=Pixel 6 persist partition (factory calibration, read-only)
+
+[Mount]
+What=/dev/disk/by-partlabel/persist
+Where=/run/oriole/persist
+Type=ext4
+Options=ro,noload,nodev,nosuid,noexec

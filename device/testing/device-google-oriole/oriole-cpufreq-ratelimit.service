@@ -1,0 +1,16 @@
+# Local: every cpufreq change is an ACPM IPC that the kernel busy-polls
+# for, and schedutil's default rate limit (750 us, from the 500 us OPP
+# clock-latency) gave ~700 changes/s while scrolling: the sugov threads
+# alone used ~6 s of CPU per 20 s. 10 ms cut that to ~77/s and made
+# GTK apps visibly smoother. The tunable only appears once clk_acpm
+# (a module, ~9 s into boot) lets cpufreq-dt probe, so wait for it.
+[Unit]
+Description=Limit schedutil frequency changes to every 10 ms (ACPM IPC cost)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'f=/sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us; i=0; while [ ! -e $f ] && [ $i -lt 60 ]; do sleep 0.5; i=$((i+1)); done; echo 10000 > $f'
+
+[Install]
+WantedBy=multi-user.target

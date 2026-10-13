@@ -1,0 +1,7 @@
+[Unit]
+Description=Power off when the charger is removed in charger mode
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/oriole-charger-monitor

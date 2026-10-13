@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+# Voice call PCMs for the AoC sound card during ModemManager calls
+enable aoc-voiced.service
+# GNSS: NMEA socket for geoclue, daemon starts on the first client
+enable bcm4776-gnssd.socket
+# GNSS for Waydroid (bcm4776-gnssd-waydroid, only when Waydroid is installed)
+enable bcm4776-gnssd-waydroid.socket

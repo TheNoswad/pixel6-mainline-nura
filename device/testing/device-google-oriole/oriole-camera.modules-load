@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT
+# libcamera's software ISP (the gs101 CSIS has no usable hardware ISP)
+# allocates its output buffers from the system dma-buf heap.
+system_heap

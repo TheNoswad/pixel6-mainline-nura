@@ -1,0 +1,63 @@
+# Pixel 6 (oriole) sensors: the AoC sensor hub (Google's USF framework)
+# brought up from Linux, an iio-sensor-proxy compatible D-Bus service
+# (light, accelerometer orientation, proximity, compass) and optional
+# auto-brightness. Own implementation of the USF client protocol, see
+# README.md. The sensor registry is the factory image's
+# (firmware-google-oriole-sensors) plus this phone's factory calibration
+# from its persist partition (/run/oriole/persist, device-google-oriole).
+pkgname=oriole-sensors
+pkgver=0.1
+pkgrel=0
+pkgdesc="Google Pixel 6 sensors (AoC USF) and auto-brightness"
+url="https://postmarketos.org"
+arch="noarch"
+license="GPL-3.0-or-later"
+depends="firmware-google-oriole-sensors python3 py3-gobject3"
+options="!check"
+source="
+	oriole_usf.py
+	oriole-usf-setup
+	oriole-sensorproxy
+	oriole-autobrightness
+	reg-order
+	oriole-usf.service
+	oriole-sensorproxy.service
+	oriole-autobrightness.service
+	oriole-sensorproxy.dbus.conf
+	iio-sensor-proxy.dropin.conf
+	"
+
+package() {
+	install -Dm644 "$srcdir"/oriole_usf.py -t "$pkgdir"/usr/lib/oriole-sensors
+	install -Dm755 -t "$pkgdir"/usr/libexec \
+		"$srcdir"/oriole-usf-setup \
+		"$srcdir"/oriole-sensorproxy \
+		"$srcdir"/oriole-autobrightness
+	install -Dm644 "$srcdir"/reg-order -t "$pkgdir"/usr/share/oriole-sensors
+	install -Dm644 -t "$pkgdir"/usr/lib/systemd/system \
+		"$srcdir"/oriole-usf.service \
+		"$srcdir"/oriole-sensorproxy.service \
+		"$srcdir"/oriole-autobrightness.service
+	# sensors on by default, auto-brightness is opt-in:
+	# systemctl enable --now oriole-autobrightness
+	install -d "$pkgdir"/usr/lib/systemd/system/multi-user.target.wants
+	ln -s ../oriole-usf.service ../oriole-sensorproxy.service \
+		"$pkgdir"/usr/lib/systemd/system/multi-user.target.wants/
+	install -Dm644 "$srcdir"/oriole-sensorproxy.dbus.conf \
+		"$pkgdir"/usr/share/dbus-1/system.d/oriole-sensorproxy.conf
+	install -Dm644 "$srcdir"/iio-sensor-proxy.dropin.conf \
+		"$pkgdir"/usr/lib/systemd/system/iio-sensor-proxy.service.d/oriole-sensors.conf
+}
+
+sha512sums="
+af11409faea968173e04cc8e67b6f9096c711e3ee97b5d1b94048aea75310142fe48df2eb9eafaf41c402eb550d2054232d057d1b63d923c037f8da86d9fd6e7  oriole_usf.py
+e22727229d960bd739f7655ddaa205f9d42873e7bf985fbf06b89fa1d51a27e661426824c98a0b16176d1726a41ad24593e9d775b380a63d50aa48def817926a  oriole-usf-setup
+74315d2b52c73e93a01a37aabd772ce0432b8989817ed823fdc8257ecf2b3d81e4de1adbcb79209e978a914440d2e7084eb98a259f23ab5db1ad58193565d7ef  oriole-sensorproxy
+faa29690ae8091786e05a44c9db7b02bc06d213a31fc51881bc14ccbfa1bfc83b4be3bedd0147d3701988b5c7c5b812cd99159bf5eb9a5c151f50538c9f01835  oriole-autobrightness
+7b36b4a886740bd810cc5da9a355bbd1b956d76aba1a5ebd677035de5695bda801d5f79a88f280592663430a74f822685465433966db5af1be4e2f0ae539de60  reg-order
+2ff8a0ce304c9a18951e36ba503c31716220ef2656d1a9c8c10ce6fbd68e09180d1ef133774c99bc683bd673bbfc02a5aa1dcb27b3f6921525e60400f6f00ce0  oriole-usf.service
+4b6a9cc03f5d22cb2dcb21999454c0d209f0dbd6df7b342f6b982469cac3079acf6578bca59a8bcc646d151fb53ded7d3498fa267dddd70f13a0715d273f9f69  oriole-sensorproxy.service
+928f37daf155e194a05aa47a4a406bba489e79727029f7a2472cb3424bb4ece44747b6b010668718288f711d2ca04b2c756387b2706dcc349d2dbc73df4f4b8b  oriole-autobrightness.service
+02083b6f63079faa8adaf80e414524162b4c8676bb35da00ddfb1569a468f55ba615674a602b2958d1b2f31185a666f870832e195ea25ec0f2cf12ed9a5e39d3  oriole-sensorproxy.dbus.conf
+8659389ddd2ff8263c1c8e8b4f4156fb9126a0f1a1c0abedc7440dde74e4bbfcefba40230d6593ebfa85ec7e74a7c99d3cae531eb51637adbb6f0f57cf2c28be  iio-sensor-proxy.dropin.conf
+"

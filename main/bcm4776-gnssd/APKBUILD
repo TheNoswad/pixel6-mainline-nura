@@ -1,0 +1,73 @@
+# Maintainer: Noswad <64293615+TheNoswad@users.noreply.github.com>
+pkgname=bcm4776-gnssd
+pkgver=0.1
+pkgrel=4
+pkgdesc="GNSS daemon for the Broadcom BCM4776 (Pixel 6) without Broadcom userspace"
+url="https://postmarketos.org"
+arch="aarch64"
+license="GPL-3.0-or-later"
+# the socket is group geoclue, geoclue is the consumer
+depends="geoclue"
+subpackages="$pkgname-doc $pkgname-systemd $pkgname-waydroid:waydroid:noarch
+	$pkgname-fwcut:fwcut:noarch"
+source="
+	bcm4776-gnssd.c
+	bcm4776-gnssd.service
+	bcm4776-gnssd.socket
+	bcm4776-gnssd-waydroid.socket
+	bcm4776-gnssd-waydroid.sysusers
+	bcm4776-fwcut
+	geoclue-bcm4776-gnssd.conf
+	README.md
+	"
+builddir="$srcdir"
+options="!check" # no test suite
+
+build() {
+	${CC:-cc} $CFLAGS -Wall -Wextra -Wno-unused-parameter \
+		-o bcm4776-gnssd bcm4776-gnssd.c -lm $LDFLAGS
+}
+
+package() {
+	install -Dm755 bcm4776-gnssd -t "$pkgdir"/usr/bin/
+	install -Dm644 geoclue-bcm4776-gnssd.conf \
+		"$pkgdir"/etc/geoclue/conf.d/90-bcm4776-gnssd.conf
+	install -Dm644 README.md -t "$pkgdir"/usr/share/doc/$pkgname/
+	install -Dm644 bcm4776-gnssd.service bcm4776-gnssd.socket \
+		bcm4776-gnssd-waydroid.socket -t "$pkgdir"/usr/lib/systemd/system/
+	install -Dm644 bcm4776-gnssd-waydroid.sysusers \
+		"$pkgdir"/usr/lib/sysusers.d/bcm4776-gnssd-waydroid.conf
+	install -Dm755 bcm4776-fwcut -t "$pkgdir"/usr/bin/
+}
+
+systemd() {
+	pkgdesc="$pkgdesc (systemd units)"
+	install_if="$pkgname=$pkgver-r$pkgrel systemd"
+	amove usr/lib/systemd/system/bcm4776-gnssd.service \
+		usr/lib/systemd/system/bcm4776-gnssd.socket
+}
+
+waydroid() {
+	pkgdesc="$pkgdesc (NMEA socket for the Waydroid GNSS HAL)"
+	install_if="$pkgname-systemd=$pkgver-r$pkgrel waydroid"
+	# the HAL inside the container is built separately (android/gnss-hal)
+	depends="$pkgname-systemd=$pkgver-r$pkgrel"
+	amove usr/lib/systemd/system/bcm4776-gnssd-waydroid.socket \
+		usr/lib/sysusers.d/bcm4776-gnssd-waydroid.conf
+}
+
+fwcut() {
+	pkgdesc="Collect the BCM4776 firmware from a stock Pixel 6 vendor partition"
+	depends="python3"
+	amove usr/bin/bcm4776-fwcut
+}
+sha512sums="
+63ee9a3b968fc91df5c71cf2725804dc29469711c2af8ea3da5a9bcb6df39b3bad5271ae6588d4fa2d85077544a4a8dcf822440ed05e935aafa25eea664048cd  bcm4776-gnssd.c
+a8782648acff8ff7ac042438a87998a052d80e1ac80832b8efd913bdbfe4a776f017d31a7b12472f1fff7c4f8eb12bb916080daf18204ddc54e710601dec6dc8  bcm4776-gnssd.service
+aab58fafde50a46bb842f18d0210429aba8caf53c5dd789b765f008b8b79274c5d6c4682affa9d6190fbf50ec5a3f49ae25ed570cc7475faf9ddc9c6b040fcfd  bcm4776-gnssd.socket
+c100600d5678efcbf93ec5e6b937a07f752762de62dab33291e41101d422f626f9e908000d214176074b8d0b2d6a6563f3db6e65f33ee9cf20b2c423dd5b6ce0  bcm4776-gnssd-waydroid.socket
+70e7e76ef6b3717f3cae076d1716348156bdeaab6d67fa9eca18648fc17f2a4844f48597abc89c7585a98f1181b8ff17ad7cf7ab8204beadfb0fdfd57a8ad00d  bcm4776-gnssd-waydroid.sysusers
+447dae85085f721ec4e4fe33ddd27b76c056ba4625029c1a366c2f31c48753205932303bc11c835342d4099b79ecf762df653b826e191301b0d7898f447b2146  bcm4776-fwcut
+5cac1a4aa1a49eecf9503478de4791a621b6ea803a80f33321dec76a7d5522a4cf851b5053594ad23ef49c9116619531cd12d68edf76cb174f063d9e57a7bb52  geoclue-bcm4776-gnssd.conf
+75edf67c60d79d6595bda377c88d8f5556a286fab27d9f807c8ef6e7b7430ef72e3cc154017cb7d1e4e06d64ea6a6b03453c0e90478d4ff470476a9f02cf8d95  README.md
+"

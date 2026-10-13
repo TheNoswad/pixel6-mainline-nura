@@ -1,0 +1,54 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Charger mode, Android style: show the battery level for ~16 s, then blank
+# the panel; a short power key press shows it again (logind logs the press,
+# HandlePowerKey=ignore), a long press reboots into the normal OS (logind
+# HandlePowerKeyLongPress=reboot). The level is redrawn every second while
+# shown because systemd status lines scroll it away. Power off once VBUS has
+# been gone for ~6 s, so the phone stays off (the bootloader only starts it
+# again when a charger is plugged in).
+psy=/sys/class/power_supply
+wake=/run/oriole-charger-wake
+dmesg -n 1
+bl=$(ls -d /sys/class/backlight/* 2>/dev/null | head -n1)
+bright=$(cat $bl/brightness 2>/dev/null)
+[ "${bright:-0}" -gt 0 ] 2>/dev/null || bright=$(cat $bl/max_brightness 2>/dev/null)
+
+journalctl -f -n0 -o cat -u systemd-logind 2>/dev/null | while read -r line; do
+	case "$line" in
+	"Power key pressed short"*) touch $wake ;;
+	esac
+done &
+
+gone=0
+n=0
+t=0
+while :; do
+	if [ -e $wake ]; then
+		rm -f $wake
+		if [ $n -ge 16 ]; then
+			echo 0 > /sys/class/graphics/fb0/blank
+			[ -n "$bl" ] && echo $bright > $bl/brightness
+		fi
+		n=0
+	fi
+	if [ $n -lt 16 ]; then
+		printf '\033c\n\n\n    Charging  %s%%\n' \
+			"$(cat $psy/max170xx_battery/capacity 2>/dev/null)" > /dev/tty1
+	elif [ $n -eq 16 ]; then
+		printf '\033c' > /dev/tty1
+		echo 4 > /sys/class/graphics/fb0/blank
+		[ -n "$bl" ] && echo 0 > $bl/brightness
+	fi
+	[ $n -le 16 ] && n=$((n + 1))
+	t=$((t + 1))
+	# tcpm-source-psy-* can take a while to appear; wait ~30 s before
+	# counting a missing one as unplugged.
+	if [ "$(cat $psy/tcpm-source-psy-*/online 2>/dev/null)" = 1 ]; then
+		gone=0
+	elif [ $t -gt 30 ]; then
+		gone=$((gone + 1))
+	fi
+	[ $gone -ge 6 ] && exec systemctl poweroff
+	sleep 1
+done

@@ -1,0 +1,65 @@
+# Pixel 6 (oriole) modem bring-up: boots the Shannon CP with tinycbd and
+# serves its remote file system (rfsd). Everything the CP needs comes from
+# the phone's own partitions, mounted read-only: modem_a (firmware,
+# confpack), efs + modem_userdata (NV), persist (cpsha).
+#
+# tinycbd (github.com/m8l8th814n-eng/tinycbd) has no licence, so it is not
+# copied here: it is fetched at build time and only our patch is in this
+# repository. Do not redistribute the built package.
+pkgname=oriole-modem
+pkgver=0.1
+pkgrel=0
+_tinycbd=4040055106680fd695816c8a1b88e2c447309278
+pkgdesc="Google Pixel 6 modem bring-up (tinycbd, rfsd)"
+url="https://github.com/m8l8th814n-eng/tinycbd"
+arch="aarch64"
+license="GPL-3.0-or-later AND LicenseRef-tinycbd-no-licence"
+depends="kmod modemmanager python3"
+options="!check"
+source="
+	tinycbd-$_tinycbd.tar.gz::https://github.com/m8l8th814n-eng/tinycbd/archive/$_tinycbd.tar.gz
+	0001-handover-imei-and-cpsha.patch
+	oriole-rfsd
+	oriole-modem-rfsd.service
+	oriole-modem-cp.service
+	oriole-modem.tmpfiles
+	run-oriole-efs.mount
+	run-oriole-modem.mount
+	run-oriole-modem_userdata.mount
+	shannon.conf
+	"
+builddir="$srcdir/tinycbd-$_tinycbd"
+
+build() {
+	make CC="${CC:-cc}" CFLAGS="$CFLAGS -Wall -Wextra" tinycbd
+}
+
+package() {
+	install -Dm755 tinycbd -t "$pkgdir"/usr/bin
+	install -Dm755 "$srcdir"/oriole-rfsd -t "$pkgdir"/usr/libexec
+	install -Dm644 -t "$pkgdir"/usr/lib/systemd/system \
+		"$srcdir"/oriole-modem-rfsd.service \
+		"$srcdir"/oriole-modem-cp.service \
+		"$srcdir"/run-oriole-efs.mount \
+		"$srcdir"/run-oriole-modem.mount \
+		"$srcdir"/run-oriole-modem_userdata.mount
+	install -d "$pkgdir"/usr/lib/systemd/system/multi-user.target.wants
+	ln -s ../oriole-modem-cp.service \
+		"$pkgdir"/usr/lib/systemd/system/multi-user.target.wants/
+	install -Dm644 "$srcdir"/oriole-modem.tmpfiles \
+		"$pkgdir"/usr/lib/tmpfiles.d/oriole-modem.conf
+	install -Dm644 "$srcdir"/shannon.conf -t "$pkgdir"/etc/ModemManager
+}
+
+sha512sums="
+97e54fdeca23d80cbab2d1fbf1d90e80d0afa907c45f7013fe102304d99b0f0ce58b854bc3f395b77a8e35b836786d9609cfa59f841721b548c6ddee043ef444  tinycbd-4040055106680fd695816c8a1b88e2c447309278.tar.gz
+000e83b53cf1541d528dcb21451c2844e3d5f5a353a58a82794e7f1cee5a1cd0d768d8bec543bd4a85873bee43cbf61035b8c55ec6a23cb6b633c765a956cf8c  0001-handover-imei-and-cpsha.patch
+b629cb076ad59064bbad7823f371cb907e464c83db4e71c793782604079aa8ff8dc421d94019718345f49ca31cd105d238e334f22eba213bad1cd29525c3bf41  oriole-rfsd
+57ba83fd6393d87bd6bb3c4ac8f8c2eb9616474d637c61159b6d2ecd9a3c89271ea562de6115533d8e7d0c4a56441a1573a951e3f7217a6353748e720b303cb8  oriole-modem-rfsd.service
+d16c5a6d2ee589141ef33cc3a2d2de9aae7691ffeb1a827bec9efaf8ca17a19d122a0ab01d4710e584fc9ae714e3f2aaf4a615d46ecde97882d56edf61183ab8  oriole-modem-cp.service
+0dbb067873231cda4ae7619bcdd8a092b1de53a34cc4db2fb092fd15bfc442674521b34552e3470aa70fa0744f9bc1335d13d9a3fb47c918e0acbb2b2616adca  oriole-modem.tmpfiles
+9c7fce5d611358bb674732a372d42ff492fad9cfaca9aa3b2fec93ad76697e06cc1a0169d8a91231a954b2f8c64256c87a7b7614faa64cbb55628b8f30aa4ef2  run-oriole-efs.mount
+fba30813dc60a44be144959823b785a7866c218a47afe58ab6795321c49d2f829d07f8828f754998bd7ca740086ad19bcc40a7e634f93617b15279e0e819df7a  run-oriole-modem.mount
+24999b2128dba1afb55a2d7a14349bd820f4d7d93b3e6d3830415619cdaa1dc9031ae1f87063ca1d373435a5db2ae2a8c2acb20deec1962fd6c2e4e0acb489a4  run-oriole-modem_userdata.mount
+585ae6402b13f8511212dad9e84e062bd600b07fbb469dfc3f74d6f72bf8f394b274690d880b448328fa62e65ab681798da44ab6cb9a6f5cd94d9df1c2328ee5  shannon.conf
+"

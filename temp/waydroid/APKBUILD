@@ -1,0 +1,75 @@
+# Forked from Alpine for a local patch (Nura on the Pixel 6): bind the host
+# GNSS socket directory (/run/waydroid-gnss) into the container for the
+# Waydroid GNSS HAL (android/gnss-hal). 9999 keeps Alpine from replacing
+# it; rebase by hand when Alpine moves on.
+maintainer="Bart Ribbers <bribbers@disroot.org>"
+pkgname=waydroid
+_pkgver=1.6.3
+pkgver=9999$_pkgver
+pkgrel=0
+pkgdesc="A container-based approach to boot a full Android system on a regular Linux system"
+url="https://github.com/waydroid/waydroid"
+# Only x86, armv7, x86_64 and aarch64 supported upstream
+arch="noarch !armhf !ppc64le !s390x"
+license="GPL-3.0-only"
+depends="
+	dnsmasq
+	gbinder-python
+	iptables
+	kmod
+	lxc
+	py3-dbus
+	py3-gobject3
+	py3-pyclip
+	python3
+	"
+makedepends="coreutils python3"
+triggers="$pkgname.trigger=/usr/share/waydroid-extra/images"
+install="$pkgname.post-upgrade"
+subpackages="
+	$pkgname-openrc
+	$pkgname-pyc
+	$pkgname-nftrules::noarch
+	$pkgname-systemd
+	"
+source="https://github.com/waydroid/waydroid/archive/$_pkgver/waydroid-$_pkgver.tar.gz
+	0001-lxc-bind-the-host-GNSS-socket-directory.patch
+	waydroid-container.initd
+	waydroid-container.confd
+	51_waydroid.nft
+	waydroid-session.desktop
+	"
+options="!check" # No tests
+builddir="$srcdir/waydroid-$_pkgver"
+
+package() {
+	make DESTDIR="$pkgdir" USE_SYSTEMD=1 USE_NFTABLES=1 install
+
+	# Generate __pycache__ packaging time instead of runtime
+	python3 -m compileall "$pkgdir"/usr/lib/waydroid/tools
+
+	install -Dm644 -t "$pkgdir"/etc/xdg/autostart "$srcdir"/waydroid-session.desktop
+
+	install -Dm755 "$srcdir"/waydroid-container.initd "$pkgdir"/etc/init.d/waydroid-container
+	install -Dm644 "$srcdir"/waydroid-container.confd "$pkgdir"/etc/conf.d/waydroid-container
+
+	install -Dm644 "$srcdir"/51_waydroid.nft \
+		"$pkgdir"/usr/share/nftables.avail/51_waydroid.nft
+}
+
+pyc() {
+	default_pyc
+
+	cd "$pkgdir"
+	local IFS=$'\n'
+	amove $(find usr/lib/waydroid -type d -name __pycache__)
+}
+
+sha512sums="
+e395b0eed9bfda3cb7b0ab8de5e8d69c57188c86b810c76fccd6a9dea2179acf219b41338382a923d0f4cfbb276064d7336c0771ba54c6ef14e8496250a3acfa  waydroid-1.6.3.tar.gz
+64ccda86b9b70c207f882b4f4a0d33159d943cda076e3d6bde94e9e138a7248674a45d1f625c1eb07f9c640ff33e7cddc707c3fda9a0cb48a64fe24990644885  0001-lxc-bind-the-host-GNSS-socket-directory.patch
+f319dde4f4bb365069dff2c1ddaa0a85d711c9e9d49011b15aec0d10da2ba0da39c464505d28cd7e8b4f803e932fdde04ca69602805d084529bac0ee6b22ba59  waydroid-container.initd
+b841282b96110ec59a7aa539db0737327b09549d55c78dc4b2c3b28b4a6ad1facf015b3175cb6d3a38f13e47aa6314ef3dc1514a4e60dd653a97409ec54ba706  waydroid-container.confd
+27cec579cfda197ff70d6328043755fc3d1719347bf4987edb86a07341bc4f02b99b65a6ef1fcde58b48a925176e6d770ed7cef304edff6a860bf4d408a62e06  51_waydroid.nft
+1848bf6b63ed51c635190c134ec3b0b1345915c13a3b721ea7dde44cb5808e632237bdba2ae12e6a9ba2f8978c07715998c357eb5bd7b7caff9d41142bae27e8  waydroid-session.desktop
+"

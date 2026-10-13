@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# net.hadess.SensorProxy (the iio-sensor-proxy D-Bus API) for the Pixel 6,
+# backed by the AoC sensor hub over USF instead of IIO: ambient light
+# (TMD3719, lux with the panel's own light subtracted), accelerometer
+# orientation (LSM6DSR), proximity (TMD3719) and compass heading (the AoC's
+# fused Orientation Sensor: azimuth from magnetic north). Sensors only sample
+# while a client holds a claim, and accel/light/compass pause while the
+# display is off.
+# Runs as root on the system bus; replaces iio-sensor-proxy.
+import math, os, subprocess, sys, time
+import gi
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib
+try:
+    gi.require_version("GLibUnix", "2.0")
+    from gi.repository import GLibUnix
+except (ValueError, ImportError):
+    GLibUnix = None
+fd_add = GLibUnix.fd_add_full if GLibUnix else GLib.unix_fd_add_full
+signal_add = GLibUnix.signal_add if GLibUnix else GLib.unix_signal_add
+sys.path.insert(0, "/usr/lib/oriole-sensors")
+import oriole_usf as usf
+
+BUS_NAME = "net.hadess.SensorProxy"
+PATH = "/net/hadess/SensorProxy"
+CONF = "/etc/oriole-sensorproxy.conf"
+DPMS = "/sys/class/drm/card1-DSI-1/dpms"
+SETUP = "/usr/libexec/oriole-usf-setup"
+
+cfg = {
+    # lux the panel itself adds under the sensor, by raw backlight level
+    # (leak.py in a ~1.7 lux room, 2026-10-10). Also depends on screen
+    # content; this is a first-order correction.
+    "leak_table": "0:0 100:3.1 600:18.6 1500:45.7 2500:74.3 3500:88.7 4095:96.4",
+    "accel_period_ms": 100,
+    "compass_period_ms": 200,
+    "debug": 0,
+}
+
+XML = """
+<node>
+  <interface name="net.hadess.SensorProxy">
+    <property name="HasAccelerometer" type="b" access="read"/>
+    <property name="AccelerometerOrientation" type="s" access="read"/>
+    <property name="AccelerometerTilt" type="s" access="read"/>
+    <property name="HasAmbientLight" type="b" access="read"/>
+    <property name="LightLevelUnit" type="s" access="read"/>
+    <property name="LightLevel" type="d" access="read"/>
+    <property name="HasProximity" type="b" access="read"/>
+    <property name="ProximityNear" type="b" access="read"/>
+    <method name="ClaimAccelerometer"/>
+    <method name="ReleaseAccelerometer"/>
+    <method name="ClaimLight"/>
+    <method name="ReleaseLight"/>
+    <method name="ClaimProximity"/>
+    <method name="ReleaseProximity"/>
+  </interface>
+</node>
+"""
+COMPASS_PROPS = ("HasCompass", "CompassHeading")
+COMPASS_XML = """
+<node>
+  <interface name="net.hadess.SensorProxy.Compass">
+    <property name="HasCompass" type="b" access="read"/>
+    <property name="CompassHeading" type="d" access="read"/>
+    <method name="ClaimCompass"/>
+    <method name="ReleaseCompass"/>
+  </interface>
+</node>
+"""
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def load_conf():
+    try:
+        for line in open(CONF):
+            line = line.split("#", 1)[0].strip()
+            if "=" in line:
+                k, v = (x.strip() for x in line.split("=", 1))
+                if k in cfg:
+                    cfg[k] = type(cfg[k])(v) if not isinstance(cfg[k], str) else v
+    except FileNotFoundError:
+        pass
+
+
+def table(spec):
+    return sorted((float(a), float(b)) for a, b in (p.split(":") for p in spec.split()))
+
+
+def interp(pts, x):
+    if x <= pts[0][0]:
+        return pts[0][1]
+    for i in range(1, len(pts)):
+        if x <= pts[i][0]:
+            t = (x - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0])
+            return pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1])
+    return pts[-1][1]
+
+
+def backlight():
+    base = "/sys/class/backlight"
+    try:
+        return int(open(os.path.join(base, sorted(os.listdir(base))[0], "brightness")).read())
+    except (OSError, IndexError, ValueError):
+        return 0
+
+
+def display_on():
+    try:
+        return open(DPMS).read().strip() == "On"
+    except OSError:
+        return True
+
+
+# Android sensor frame: x right, y up (towards the top edge), z out of the
+# screen; values are the reaction to gravity (upright = +g on y).
+def orientation(prev, x, y, z):
+    g = math.sqrt(x * x + y * y + z * z)
+    if g < 3.0:                               # free fall / garbage
+        return prev
+    rot_y = math.degrees(math.atan2(y, math.hypot(x, z)))
+    rot_x = math.degrees(math.atan2(x, math.hypot(y, z)))
+    if abs(rot_y) > 35 and abs(rot_x) > 35:   # on the border: keep
+        return prev
+    if abs(rot_y) > 35:
+        return "normal" if rot_y > 0 else "bottom-up"
+    if abs(rot_x) > 35:
+        return "right-up" if rot_x > 0 else "left-up"
+    return prev                               # flat: keep the last one
+
+
+def tilt(x, y, z):
+    g = math.sqrt(x * x + y * y + z * z) or 1.0
+    a = math.degrees(math.asin(max(-1.0, min(1.0, z / g))))
+    if a > 70:
+        return "face-up"
+    if a < -70:
+        return "face-down"
+    if a > 20:
+        return "tilted-up"
+    if a < -20:
+        return "tilted-down"
+    return "vertical"
+
+
+class Sensor:
+    def __init__(self, key, name, mode, period_ms, latency_ms, needs_display):
+        self.key, self.name, self.mode = key, name, mode
+        self.period_ms, self.latency_ms = period_ms, latency_ms
+        self.needs_display = needs_display
+        self.sid = None
+        self.handle = None
+        self.claims = set()
+
+
+class Proxy:
+    def __init__(self):
+        load_conf()
+        self.leak = table(cfg["leak_table"])
+        self.sensors = {
+            "accel": Sensor("accel", "LSM6DSR Accelerometer", usf.MODE_CONTINUOUS,
+                            cfg["accel_period_ms"], 0, True),
+            "light": Sensor("light", "TMD3719 Ambient Light", usf.MODE_CONTINUOUS,
+                            0, 1000, True),
+            "prox": Sensor("prox", "TMD3719 Proximity", usf.MODE_ON_CHANGE, 0, 0, False),
+            "compass": Sensor("compass", "Orientation Sensor", usf.MODE_CONTINUOUS,
+                              cfg["compass_period_ms"], 0, True),
+        }
+        self.props = {
+            "HasAccelerometer": False, "AccelerometerOrientation": "undefined",
+            "AccelerometerTilt": "undefined",
+            "HasAmbientLight": False, "LightLevelUnit": "lux", "LightLevel": 0.0,
+            "HasProximity": False, "ProximityNear": False,
+            "HasCompass": False, "CompassHeading": -1.0,
+        }
+        self.by_handle = {}
+        self.light_fresh = True
+        self.watches = {}          # sender -> bus watch id
+        self.u = None
+        self.fd_source = None
+        self.screen = display_on()
+        self.conn = None
+
+    # ---- USF ----
+    def connect_usf(self):
+        if os.geteuid() == 0:
+            subprocess.run([SETUP], check=True)
+        self.u = usf.Usf()
+        names = {}
+        for sid in self.u.sensor_list():
+            i = self.u.sensor_info(sid)
+            if i:
+                names[i["name"]] = sid
+        for s in self.sensors.values():
+            s.sid, s.handle = names.get(s.name), None
+            log(f"{s.key}: {s.name} = sensor {s.sid}")
+        self.set_props(HasAccelerometer=self.sensors["accel"].sid is not None,
+                       HasAmbientLight=self.sensors["light"].sid is not None,
+                       HasProximity=self.sensors["prox"].sid is not None,
+                       HasCompass=self.sensors["compass"].sid is not None)
+        self.fd_source = fd_add(GLib.PRIORITY_DEFAULT, self.u.fd,
+                                               GLib.IOCondition.IN, self.on_usf)
+        self.by_handle = {}
+        for s in self.sensors.values():
+            self.update(s)
+
+    def usf_failed(self, e):
+        log(f"USF error: {e}; reconnecting")
+        if self.fd_source:
+            GLib.source_remove(self.fd_source)
+            self.fd_source = None
+        try:
+            self.u.close()
+        except Exception:
+            pass
+        self.u = None
+        for s in self.sensors.values():
+            s.handle = None
+        GLib.timeout_add_seconds(3, self.retry_connect)
+
+    def retry_connect(self):
+        try:
+            self.connect_usf()
+        except Exception as e:
+            log(f"reconnect failed: {e}")
+            return True        # try again
+        return False
+
+    def update(self, s):
+        """Start or stop sampling to match claims and display state."""
+        want = bool(s.claims) and s.sid is not None and (self.screen or not s.needs_display)
+        if self.u is None or want == (s.handle is not None):
+            return
+        try:
+            if want:
+                s.handle = self.u.start(s.sid, s.mode, s.period_ms * 1000000,
+                                        s.latency_ms * 1000000)
+                self.by_handle[s.handle] = s
+                if s.key == "light":
+                    self.light_fresh = True    # always publish the first sample
+                log(f"{s.key}: started (handle {s.handle})")
+            else:
+                self.u.stop(s.sid, s.handle)
+                self.by_handle.pop(s.handle, None)
+                s.handle = None
+                log(f"{s.key}: stopped")
+        except (usf.UsfError, OSError) as e:
+            self.usf_failed(e)
+            return
+        if self.u and self.u.pending:
+            GLib.idle_add(self.drain)
+
+    def drain(self):
+        while self.u and self.u.pending:
+            self.handle_msg(self.u.pending.pop(0))
+        return False
+
+    def on_usf(self, fd, cond):
+        try:
+            d = self.u.recv(0)
+        except OSError as e:
+            self.usf_failed(e)
+            return False
+        if d is not None:
+            self.handle_msg(d)
+        return True
+
+    def handle_msg(self, d):
+        m = usf.Table(d)
+        if m.scalar(0, "<I", 0) != usf.MSG_SAMPLE:
+            return
+        samples = usf.parse_samples(m.bytes(1))
+        if not samples:
+            return
+        s = self.by_handle.get(samples[0][0])
+        if s is None:
+            return
+        vals = [x[2] for x in samples]
+        if s.key == "light":
+            lux = sorted(v[0] for v in vals)[len(vals) // 2]
+            amb = max(0.0, lux - interp(self.leak, backlight()))
+            amb = round(amb, 1)
+            old = self.props["LightLevel"]
+            if self.light_fresh or abs(amb - old) > max(0.2, 0.02 * old):
+                self.light_fresh = False
+                if amb == old:
+                    self.props["LightLevel"] = None   # force the signal
+                self.set_props(LightLevel=amb)
+        elif s.key == "accel":
+            x, y, z = vals[-1][:3]
+            o = orientation(self.props["AccelerometerOrientation"], x, y, z)
+            self.set_props(AccelerometerOrientation=o, AccelerometerTilt=tilt(x, y, z))
+        elif s.key == "prox":
+            self.set_props(ProximityNear=vals[-1][0] < 4.9)
+        elif s.key == "compass":
+            # values: azimuth, pitch, roll (degrees); 0.5 degree steps are
+            # plenty and keep the signal rate down
+            h = round(vals[-1][0] * 2) / 2 % 360.0
+            self.set_props(CompassHeading=h)
+
+    # ---- display ----
+    def poll_display(self):
+        on = display_on()
+        if on != self.screen:
+            self.screen = on
+            for s in self.sensors.values():
+                self.update(s)
+        return True
+
+    # ---- D-Bus ----
+    def set_props(self, **kw):
+        changed = {k: v for k, v in kw.items() if self.props.get(k) != v}
+        if not changed:
+            return
+        self.props.update(changed)
+        if cfg["debug"]:
+            log(f"changed {changed}")
+        if self.conn is None:
+            return
+        for iface, path in (("net.hadess.SensorProxy", PATH),
+                            ("net.hadess.SensorProxy.Compass", PATH + "/Compass")):
+            variants = {k: GLib.Variant({bool: "b", str: "s", float: "d"}[type(v)], v)
+                        for k, v in changed.items() if (k in COMPASS_PROPS) == iface.endswith("Compass")}
+            if variants:
+                self.conn.emit_signal(None, path, "org.freedesktop.DBus.Properties",
+                                      "PropertiesChanged",
+                                      GLib.Variant("(sa{sv}as)", (iface, variants, [])))
+
+    def get_prop(self, conn, sender, path, iface, name):
+        v = self.props[name]
+        return GLib.Variant({bool: "b", str: "s", float: "d"}[type(v)], v)
+
+    def method(self, conn, sender, path, iface, name, params, inv):
+        key = {"Accelerometer": "accel", "Light": "light", "Proximity": "prox",
+               "Compass": "compass"}[name.replace("Claim", "").replace("Release", "")]
+        s = self.sensors[key]
+        if name.startswith("Claim"):
+            s.claims.add(sender)
+            self.watch(sender)
+        else:
+            s.claims.discard(sender)
+        log(f"{name} from {sender}: {len(s.claims)} claim(s)")
+        self.update(s)
+        inv.return_value(None)
+
+    def watch(self, sender):
+        if sender in self.watches:
+            return
+        self.watches[sender] = Gio.bus_watch_name_on_connection(
+            self.conn, sender, Gio.BusNameWatcherFlags.NONE, None, self.vanished)
+
+    def vanished(self, conn, sender):
+        Gio.bus_unwatch_name(self.watches.pop(sender))
+        for s in self.sensors.values():
+            if sender in s.claims:
+                s.claims.discard(sender)
+                log(f"{sender} went away, dropping its {s.key} claim")
+                self.update(s)
+
+    def on_bus(self, conn, name):
+        self.conn = conn
+        node = Gio.DBusNodeInfo.new_for_xml(XML)
+        conn.register_object(PATH, node.interfaces[0], self.method, self.get_prop, None)
+        cnode = Gio.DBusNodeInfo.new_for_xml(COMPASS_XML)
+        conn.register_object(PATH + "/Compass", cnode.interfaces[0], self.method,
+                             self.get_prop, None)
+
+    def run(self):
+        loop = GLib.MainLoop()
+        try:
+            self.connect_usf()
+        except Exception as e:
+            log(f"USF not ready: {e}")
+            GLib.timeout_add_seconds(3, self.retry_connect)
+        GLib.timeout_add_seconds(1, self.poll_display)
+        bus = Gio.BusType.SESSION if os.environ.get("ORIOLE_SENSORPROXY_SESSION") else Gio.BusType.SYSTEM
+        Gio.bus_own_name(bus, BUS_NAME, Gio.BusNameOwnerFlags.NONE,
+                         self.on_bus, lambda *a: log("name acquired"),
+                         lambda *a: (log("lost bus name"), loop.quit()))
+        signal_add(GLib.PRIORITY_DEFAULT, 15, loop.quit)
+        signal_add(GLib.PRIORITY_DEFAULT, 2, loop.quit)
+        loop.run()
+        for s in self.sensors.values():
+            s.claims.clear()
+            self.update(s)
+
+
+if __name__ == "__main__":
+    Proxy().run()

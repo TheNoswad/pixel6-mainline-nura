@@ -1,0 +1,36 @@
+# Maintainer: Noswad <64293615+TheNoswad@users.noreply.github.com>
+pkgname=waydroid-sensors-usf
+pkgver=0.1
+pkgrel=0
+pkgdesc="Waydroid sensors HAL (waydroid-sensord) for Google USF sensor hubs (Pixel 6 AoC)"
+url="https://postmarketos.org"
+arch="aarch64"
+license="GPL-3.0-or-later"
+# same /usr/bin/waydroid-sensord as the sensorfw-based waydroid-sensors
+provides="waydroid-sensors"
+depends="waydroid !waydroid-sensors"
+makedepends="glib-dev libgbinder-dev libglibutil-dev"
+subpackages="$pkgname-doc"
+source="
+	waydroid-sensord.c
+	README.md
+	"
+builddir="$srcdir"
+options="!check" # no test suite
+
+build() {
+	${CC:-cc} $CFLAGS -Wall -Wextra -Wno-unused-parameter \
+		-Wno-missing-field-initializers \
+		$(pkg-config --cflags glib-2.0 libgbinder) \
+		-o waydroid-sensord waydroid-sensord.c \
+		$(pkg-config --libs glib-2.0 libgbinder) $LDFLAGS
+}
+
+package() {
+	install -Dm755 waydroid-sensord -t "$pkgdir"/usr/bin/
+	install -Dm644 README.md -t "$pkgdir"/usr/share/doc/$pkgname/
+}
+sha512sums="
+03202d19170f20898cab6afbcc3e69b8a6dfd55df81bd8d9c26ddfb131fbd91a59e6cf3eadeb2488ce974d728b8e1d94773865f0ef1e97e6cdb2a6fb672c5cd9  waydroid-sensord.c
+07df578598746019b0283abd4603e7f3bbe43fd6d02ca29005c4d4331ed4d6ee7755cdb00489f0269811477c30629ce6924b6d69b3d09b0a53f5ef913b95f066  README.md
+"

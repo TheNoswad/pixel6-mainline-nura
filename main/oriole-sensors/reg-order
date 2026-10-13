@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Load order = SensorHal::kRegistryLoadPathList: vendor, vendor/append, persist.
+# The AoC skips scripts whose "?" CDT filter doesn't match (oriole = 0x36100,
+# only oriole_dvt.reg of the vendor scripts), so only those are listed. Each
+# name is looked up in the factory image's scripts, then in persist.
+oriole_dvt.reg
+motion_state.reg
+icp10101_baro_fac_cal.reg
+lsm6dsr_accel_fac_cal.reg
+lsm6dsr_gyro_fac_cal.reg
+tmd3719_als_fac_cal.reg
+tmd3719_prox_fac_cal.reg
+vd6282_rls_fac_cal.reg

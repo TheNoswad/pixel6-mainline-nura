@@ -1,0 +1,47 @@
+#!/sbin/openrc-run
+
+name="Waydroid Container Manager"
+description="Waydroid Container Manager"
+
+pidfile=/run/waydroid-container.pid
+
+command=/usr/bin/waydroid
+command_args="container start"
+command_args_background="-p $pidfile"
+
+# Do not generate __pycache__ even when -pyc subpackages aren't installed
+export PYTHONDONTWRITEBYTECODE=1
+start_stop_daemon_args='--env PYTHONDONTWRITEBYTECODE="$PYTHONDONTWRITEBYTECODE"'
+
+depend() {
+	need cgroups
+	use net
+}
+
+start_pre() {
+	# Avoid 'mount: /var/lib/waydroid/rootfs: mount failed: Operation not permitted.'
+	if [ ! -c /dev/loop-control ]; then
+		if ! modprobe loop; then
+			eerror "Loopback device support is not available in this kernel"
+			return 1
+		fi
+	fi
+	# Required to avoid /system/bin/vold crashing in LXC container
+	if [ ! -d /sys/fs/fuse/connections ]; then
+		if ! modprobe fuse; then
+			eerror "Filesystem in Userspace support is not available in this kernel"
+			return 1
+		fi
+	fi
+}
+
+stop() {
+	ebegin "Stopping Waydroid container..."
+	
+	$supervisor $RC_SVCNAME \
+		--stop \
+		--pidfile $pidfile
+	$command container stop
+	$command session stop
+	eend $?
+}

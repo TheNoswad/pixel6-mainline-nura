@@ -1,0 +1,20 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 13:10:00 -0500
+Subject: [PATCH] pipeline: simple: Add the Google gs101 MIPI-CSIS receiver
+
+The gs101 (Tensor) CSIS driver captures raw Bayer from the sensor
+through the CSIS write-DMA into a single video node, with no ISP.
+Use it with the software ISP.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -257,6 +257,7 @@
+ 
+ static const SimplePipelineInfo supportedDevices[] = {
+ 	{ "dcmipp", {}, false },
++	{ "gs101-mipi-csis", {}, true },
+ 	{ "imx7-csi", { { "pxp", 1 } }, true },
+ 	{ "intel-ipu6", {}, true },
+ 	{ "intel-ipu7", {}, true },

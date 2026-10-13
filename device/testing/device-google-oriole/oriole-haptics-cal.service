@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Pixel 6 haptics factory calibration
+# started by 71-oriole-haptics.rules when the haptics input device appears
+RequiresMountsFor=/run/oriole/persist
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/oriole-haptics-cal

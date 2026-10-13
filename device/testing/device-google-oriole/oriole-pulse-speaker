@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Local (oriole): the AoC sound card appears ~20 s into boot, often after
+# PulseAudio has started and skipped oriole-speaker.pa's module-alsa-card.
+# Wait for the card and load it with the same arguments if it is missing.
+for i in $(seq 120); do
+	[ -e /proc/asound/googleaocsndcar ] && break
+	sleep 1
+done
+[ -e /proc/asound/googleaocsndcar ] || exit 0
+# PipeWire (pipewire-pulse) handles the card itself (90-oriole-aoc wireplumber rule)
+pactl info 2>/dev/null | grep -q "^Server Name: pulseaudio$" || exit 0
+pactl list modules short 2>/dev/null | grep -q 'name=platform-sound-aoc' && exit 0
+exec pactl load-module module-alsa-card device_id=googleaocsndcar \
+	name=platform-sound-aoc card_name=alsa_card.platform-sound-aoc \
+	profile_set=google-oriole-aoc.conf tsched=no mmap=no

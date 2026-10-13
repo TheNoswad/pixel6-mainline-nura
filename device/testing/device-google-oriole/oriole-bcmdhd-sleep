@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Local: bcmdhd does not survive s2idle (dongle trap after resume, then
+# dhdpcie_bus_dongle_attach fails; reloading the module afterwards does not
+# recover it). Until that is fixed properly, unload it before sleep and load
+# it again after. wpa_supplicant keeps stale nl80211 state for the removed
+# wlan0 ("Failed to initialize driver interface") and NetworkManager gives up
+# after five retries, so restart it right after the reload.
+# systemd-sleep runs this with $1 = pre|post, $2 = suspend|hibernate|...
+mark=/run/oriole-bcmdhd-unloaded
+case "$1" in
+pre)
+	if grep -q '^bcmdhd ' /proc/modules; then
+		modprobe -r bcmdhd && touch $mark
+	fi
+	;;
+post)
+	if [ -e $mark ]; then
+		rm -f $mark
+		modprobe bcmdhd
+		systemctl --no-block restart wpa_supplicant.service
+	fi
+	;;
+esac
+exit 0

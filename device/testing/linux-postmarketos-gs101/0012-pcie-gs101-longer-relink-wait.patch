@@ -1,0 +1,29 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] PCI: gs101: wait 500 ms per relink try
+
+Now and then the s5123 endpoint is not detected yet when a relink try
+starts; 150 ms per try was too short and a run of failed tries crashed the
+CP (2026-10-09). Local.
+---
+--- a/drivers/pci/controller/dwc/pcie-gs101.c
++++ b/drivers/pci/controller/dwc/pcie-gs101.c
+@@ -79,12 +79,14 @@
+ #define to_gs101_pcie(x)	dev_get_drvdata((x)->dev)
+ 
+ /*
+- * exynos_pcie_poweron() link training: tries and wait per try. The vendor
+- * retries up to 10 times with ~24-48 ms each; a good relink here reaches L0
+- * well inside 150 ms, and 5 tries stay inside the CP's ~3 s wakeup budget.
++ * exynos_pcie_poweron() link training: tries and wait per try. Training
++ * itself takes ~25 ms, but now and then the endpoint is not detected yet
++ * (LTSSM stays in Detect) when a try starts; give each try 500 ms before
++ * re-asserting PERST# and starting over (was 150 ms x 5: a run of those
++ * failures ended with the CP dropping PHONE_ACTIVE, 2026-10-09).
+  */
+-#define GS101_RELINK_TRIES	5
+-#define GS101_RELINK_WAIT_MS	150
++#define GS101_RELINK_TRIES	4
++#define GS101_RELINK_WAIT_MS	500
+ 
+ /*
+  * The Samsung CP interface driver addresses root complexes by channel number

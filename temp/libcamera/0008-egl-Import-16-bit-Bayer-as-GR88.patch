@@ -1,0 +1,33 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 14:05:00 -0500
+Subject: [PATCH] egl: import 16-bit Bayer as GR88, not RG88
+
+The unpacked Bayer shaders read the low byte of each 16-bit sample from
+.r and the high byte from .g, the same layout the glTexImage2D(GL_RG,
+GL_UNSIGNED_BYTE) upload fallback produces. In DRM fourcc notation
+(little-endian) that is DRM_FORMAT_GR88; DRM_FORMAT_RG88 has R in the
+high byte.
+
+Mesa's panfrost does not list RG88 for dma-buf import at all, so every
+input buffer import failed and the software ISP mapped and uploaded each
+frame from the CPU (Pixel 6 front camera, 3280x2464: ~56 ms per frame).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+--- a/src/libcamera/egl.cpp
++++ b/src/libcamera/egl.cpp
+@@ -180,7 +180,13 @@
+ 		drm_format = DRM_FORMAT_R8;
+ 		break;
+ 	case GL_RG:
+-		drm_format = DRM_FORMAT_RG88;
++		/*
++		 * Two bytes per texel, R from the first (low) byte: that is
++		 * GR88 in DRM's little-endian notation. RG88 has R in the high
++		 * byte, which panfrost doesn't import and other drivers would
++		 * sample byte-swapped.
++		 */
++		drm_format = DRM_FORMAT_GR88;
+ 		break;
+ 	case GL_RGBA:
+ 		drm_format = DRM_FORMAT_ARGB8888;

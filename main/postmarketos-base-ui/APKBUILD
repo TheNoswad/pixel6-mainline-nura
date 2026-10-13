@@ -1,0 +1,383 @@
+maintainer="Clayton Craft <clayton@craftyguy.net>"
+pkgname=postmarketos-base-ui
+pkgver=61
+pkgrel=2
+pkgdesc="Meta package for minimal postmarketOS UI base"
+url="https://postmarketos.org"
+arch="noarch"
+license="GPL-3.0-or-later"
+depends="
+	avahi
+	chrony
+	dbus
+	haveged
+	nftables
+	pipewire
+	pipewire-spa-libcamera
+	pipewire-webrtc
+	postmarketos-artwork-icons
+	postmarketos-base
+	postmarketos-bootsplash-virtual
+	shadow
+	tzdata
+	util-linux
+	wireless-regdb
+	wireplumber
+	xdg-utils
+	"
+subpackages="
+	$pkgname-audio
+	$pkgname-audio-backend-pipewire:audio_pipewire
+	$pkgname-audio-backend-pulseaudio:audio_pulseaudio
+	$pkgname-alsa-utils:alsa_utils
+	$pkgname-bluez-openrc:bluez_openrc
+	$pkgname-bluez-obexd:obexd
+	$pkgname-elogind
+	$pkgname-flatpak
+	$pkgname-iio-sensor-proxy-systemd:iio_sensor_proxy_systemd
+	$pkgname-networkmanager
+	$pkgname-modemmanager
+	$pkgname-modemmanager-systemd:modemmanager_systemd
+	$pkgname-modemmanager-openrc:modemmanager_openrc
+	$pkgname-openrc
+	$pkgname-openrc-settingsd:openrc_settingsd
+	$pkgname-qt-tweaks:qt_tweaks
+	$pkgname-qt-wayland:qt_wayland
+	$pkgname-tinydm
+	$pkgname-tinydm-openrc:tinydm_openrc
+	$pkgname-wayland
+	$pkgname-wifi-iwd:iwd
+	$pkgname-wifi-iwd-openrc:iwd_openrc
+	$pkgname-wifi-wpa_supplicant-openrc:wpa_supplicant_openrc
+	$pkgname-wifi-wpa_supplicant:wpa_supplicant
+	$pkgname-x11
+	"
+install="
+	$pkgname-elogind.post-install
+	$pkgname-openrc.post-install
+	$pkgname-openrc.post-upgrade
+	$pkgname-openrc-settingsd.post-install
+	$pkgname-openrc-settingsd.post-upgrade
+	$pkgname-wifi-iwd.post-install
+	$pkgname-wifi-iwd-openrc.post-install
+	$pkgname-wifi-iwd-openrc.post-upgrade
+	$pkgname-wifi-wpa_supplicant-openrc.post-install
+	$pkgname-wifi-wpa_supplicant-openrc.post-upgrade
+	"
+replaces="
+	chrony-common
+	linux-pam
+	postmarketos-base
+	sleep-inhibitor
+	wpa_supplicant-openrc
+	"
+replaces_priority=100  # leave plenty for alpine
+
+# See MR 4744, MR 5352 and MR 5540 for the rationale of the font configuration
+_pmb_recommends="
+	font-droid
+	font-droid-nonlatin
+	font-twemoji
+	lang
+	"
+
+_source644="
+	etc/chrony/chrony.conf
+	etc/environment
+	etc/elogind/logind.conf
+	etc/conf.d/bluetooth
+	etc/conf.d/openrc-settingsd
+	etc/conf.d/modemmanager
+	etc/conf.d/tinydm
+	etc/conf.d/wpa_supplicant
+	etc/profile.d/pmos-path.sh
+	etc/profile.d/qt-mobile-controls.sh
+	etc/profile.d/qt-wayland.sh
+	etc/pulse/default.pa.d/postmarketos.pa
+	etc/sleep-inhibitor.conf
+	etc/X11/Xwrapper.config
+	usr/lib/NetworkManager/conf.d/50-connectivity.conf
+	usr/lib/NetworkManager/conf.d/50-hostname-mode.conf
+	usr/lib/NetworkManager/conf.d/50-iwd.conf
+	usr/lib/NetworkManager/conf.d/50-random-mac.conf
+	usr/lib/NetworkManager/conf.d/50-wwan-policy.conf
+	usr/lib/systemd/system/ModemManager.service.d/quick-suspend-resume.conf
+	usr/lib/systemd/system/iio-sensor-proxy.service.d/shutdown.conf
+	usr/lib/tmpfiles.d/alsa-utils.conf
+	usr/lib/udev/rules.d/50-udmabuf.rules
+	usr/lib/udev/rules.d/90-iio-sensor-proxy-proximity-sensor-enable.rules
+	usr/share/flatpak/remotes.d/flathub.flatpakrepo
+	usr/share/pipewire/pipewire-pulse.conf.d/50-postmarketos.conf
+	usr/share/wireplumber/wireplumber.conf.d/50-bluetooth.conf
+	usr/share/mkinitfs/files/10-wireless-regdb.files
+"
+_source755="
+	usr/share/tinydm/env-wayland.d/50-sdl-wayland.sh
+	"
+
+# Avoid filename based checksum conflicts by including the whole path.
+flatpath() {
+	local i
+	for i in $@; do
+		echo "rootfs-$i" | sed s./.-.g
+	done
+}
+source="$(flatpath $_source644 $_source600 $_source755)"
+
+_pmb_select="postmarketos-base-ui-audio-backend postmarketos-base-ui-wifi"
+package() {
+	# wifi, audio and init backends are provided by a subpackage in this
+	# APKBUILD and it won't exist when this is evaluated at the top level.
+	# It's moved into this function to work around it.
+	depends="$depends $pkgname-wifi"
+
+	local i
+	for i in $_source644; do
+		install -Dm644 "$srcdir/$(flatpath "$i")" "$pkgdir/$i"
+	done
+	for i in $_source600; do
+		install -Dm600 "$srcdir/$(flatpath "$i")" "$pkgdir/$i"
+	done
+	for i in $_source755; do
+		install -Dm755 "$srcdir/$(flatpath "$i")" "$pkgdir/$i"
+	done
+}
+
+alsa_utils() {
+	install_if="$pkgname=$pkgver-r$pkgrel alsa-utils"
+
+	amove usr/lib/tmpfiles.d/alsa-utils.conf
+}
+
+wayland() {
+	install_if="$pkgname=$pkgver-r$pkgrel wayland-server-libs"
+
+	mkdir -p "$subpkgdir"
+}
+
+x11() {
+	install_if="$pkgname=$pkgver-r$pkgrel xorg-server"
+	depends="
+		libinput
+		xf86-input-libinput
+		xf86-video-fbdev"
+	provides="postmarketos-base-x11=$pkgver-r$pkgrel"
+	amove etc/X11/Xwrapper.config
+}
+
+bluez_openrc() {
+	install_if="$pkgname=$pkgver-r$pkgrel bluez-openrc"
+
+	amove etc/conf.d/bluetooth
+}
+
+openrc() {
+	install_if="$pkgname=$pkgver-r$pkgrel openrc"
+	depends="
+		chrony-openrc
+		dbus-openrc
+		haveged-openrc
+		openrc
+		routewrangler-openrc
+		sleep-inhibitor
+		util-linux-openrc
+	"
+
+	amove etc/sleep-inhibitor.conf
+}
+
+elogind() {
+	install_if="$pkgname=$pkgver-r$pkgrel elogind"
+	depends="!systemd-logind sleep-inhibitor-openrc openrc"
+	replaces="elogind"
+	provides="postmarketos-base-elogind=$pkgver-r$pkgrel"
+
+	amove etc/elogind/logind.conf
+}
+
+openrc_settingsd() {
+	install_if="$pkgname=$pkgver-r$pkgrel openrc-settingsd-openrc"
+	replaces="openrc-settingsd-openrc"
+	depends="openrc"
+
+	amove etc/conf.d/openrc-settingsd
+}
+
+tinydm() {
+	install_if="$pkgname=$pkgver-r$pkgrel tinydm"
+	provides="postmarketos-base-tinydm=$pkgver-r$pkgrel"
+
+	amove usr/share/tinydm/env-wayland.d/50-sdl-wayland.sh
+}
+
+tinydm_openrc() {
+	install_if="$pkgname=$pkgver-r$pkgrel tinydm-openrc"
+	replaces="tinydm-openrc"
+
+	amove etc/conf.d/tinydm
+}
+
+obexd() {
+	install_if="$pkgname=$pkgver-r$pkgrel bluez-obexd"
+	replaces="bluez-obexd"
+	depends="obex-capabilities"
+	mkdir -p "$subpkgdir"
+}
+
+networkmanager() {
+	# dnsmasq: required for connection sharing/hotspot
+	depends="
+		dnsmasq
+		networkmanager
+		networkmanager-cli
+		networkmanager-tui
+		networkmanager-wifi
+		networkmanager-wwan
+		routewrangler
+	"
+	amove usr/lib/NetworkManager/conf.d/50-hostname-mode.conf
+	amove usr/lib/NetworkManager/conf.d/50-random-mac.conf
+	amove usr/lib/NetworkManager/conf.d/50-wwan-policy.conf
+}
+
+qt_tweaks() {
+	amove etc/profile.d/qt-mobile-controls.sh
+}
+
+qt_wayland() {
+	amove etc/profile.d/qt-wayland.sh
+}
+
+wpa_supplicant() {
+	pkgdesc="Use wpa_supplicant as the WiFi backend."
+	provides="postmarketos-base-ui-wifi=$pkgver-r$pkgrel"
+	provider_priority=100
+
+	depends="wpa_supplicant"
+
+	mkdir -p "$subpkgdir"
+}
+
+wpa_supplicant_openrc() {
+	install_if="$pkgname-wifi-wpa_supplicant=$pkgver-r$pkgrel openrc"
+
+	depends="wpa_supplicant-openrc openrc"
+	replaces="wpa_supplicant-openrc"
+	replaces_priority=100
+
+	amove etc/conf.d/wpa_supplicant
+}
+
+iwd() {
+	pkgdesc="Use iwd as the WiFi backend (but may not work with all devices)"
+	provides="postmarketos-base-ui-wifi=$pkgver-r$pkgrel"
+	# Lower than wpa_supplicant for now, see:
+	# https://gitlab.postmarketos.org/postmarketOS/pmaports/-/issues/1379
+	provider_priority=90
+
+	depends="iwd"
+
+	amove usr/lib/NetworkManager/conf.d/50-iwd.conf
+}
+
+iwd_openrc() {
+	install_if="$pkgname-wifi-iwd=$pkgver-r$pkgrel openrc"
+	depends="iwd-openrc openrc"
+
+	mkdir -p "$subpkgdir"
+}
+
+audio() {
+	pkgdesc="For UIs that require audio support"
+	depends="postmarketos-base-ui-audio-backend alsa-utils"
+
+	mkdir "$subpkgdir"
+}
+
+audio_pipewire() {
+	pkgdesc="Use pipewire as the audio backend. (but may not work with all devices)"
+	depends="pipewire-alsa pipewire-pulse pipewire-spa-bluez pipewire-tools
+		wireplumber-logind"
+	provides="postmarketos-base-ui-audio-backend=$pkgver-r$pkgrel"
+	provider_priority=90
+
+	amove usr/share/pipewire/pipewire-pulse.conf.d/50-postmarketos.conf
+	amove usr/share/wireplumber/wireplumber.conf.d/50-bluetooth.conf
+}
+
+audio_pulseaudio() {
+	pkgdesc="Use pulseaudio as the audio backend."
+	depends="alsa-plugins-pulse pulseaudio pulseaudio-alsa pulseaudio-utils !pipewire-pulse"
+	provides="postmarketos-base-ui-audio-backend=$pkgver-r$pkgrel"
+	provider_priority=100
+
+	amove etc/pulse/default.pa.d/postmarketos.pa
+}
+
+flatpak() {
+	install_if="$pkgname=$pkgver-r$pkgrel flatpak"
+
+	amove usr/share/flatpak/remotes.d/flathub.flatpakrepo
+}
+
+modemmanager() {
+	install_if="$pkgname=$pkgver-r$pkgrel modemmanager"
+	mkdir -p "$subpkgdir"
+}
+
+modemmanager_systemd() {
+	# note: can't use default_systemd since it slurps up units from other subpkgs
+	install_if="$pkgname-modemmanager=$pkgver-r$pkgrel systemd"
+	amove usr/lib/systemd/system/ModemManager.service.d/quick-suspend-resume.conf
+}
+
+modemmanager_openrc() {
+	install_if="$pkgname-modemmanager=$pkgver-r$pkgrel openrc"
+	replaces="
+		device-pine64-pinephone
+		device-pine64-pinephonepro
+		device-purism-librem5
+		soc-qcom-modem-openrc
+	"
+
+	amove etc/conf.d/modemmanager
+}
+
+iio_sensor_proxy_systemd() {
+	depends=
+	install_if="$pkgname=$pkgver-r$pkgrel iio-sensor-proxy systemd"
+
+	amove usr/lib/systemd/system/iio-sensor-proxy.service.d/shutdown.conf
+}
+
+sha512sums="
+187baa4a2b77e1e97a13536553ef2e1f64c3968f07ab2a372b550e4eee10a801a3b9797766d0d9f566148230335f3d4d150cd335bc40050322313a195874d608  rootfs-etc-chrony-chrony.conf
+78ce55d9bb50db22df3f4b8a0757f7d6147caa212bcc5366b8bc03cdabfd6f20354c272120d75789424d1cacc17cd62facbf3fae497d9f1714756578c80d3072  rootfs-etc-environment
+8d2c54fe3ca62c62f8337fb6be28479d0e02ea63f32abae81907f2768631e65c9e17485f8bc0854a013377f729b06dd1873e2b75f86f657ece866d00aecbbdb4  rootfs-etc-elogind-logind.conf
+b841282b96110ec59a7aa539db0737327b09549d55c78dc4b2c3b28b4a6ad1facf015b3175cb6d3a38f13e47aa6314ef3dc1514a4e60dd653a97409ec54ba706  rootfs-etc-conf.d-bluetooth
+49fb494b659fe0149a93eafe109609acce6a470bb8acea160638d07e0e4b11af2544f34549d5ef2deb2914a7ef13d0d470b04ad62981f14f96999af02a5f24cf  rootfs-etc-conf.d-openrc-settingsd
+e33f41360ccc4900bb76a26cc7b46bde1fb90facdf45c4fbcebc80499386939948401cacd6df9f779eafab10f4ee77ee1fef3e7bd06f483f8c2a4a644c84f327  rootfs-etc-conf.d-modemmanager
+44e4283c6f77de83915977dd3bc2d8e2d96b3ed6cc68d3cc156304359ae649b5a8b0bac843e517ec6faa2066dd43ba85e313899b1eda04862f864fb9eb508aa0  rootfs-etc-conf.d-tinydm
+e9f6167d8e0af6d2b60dd4b95b7a58af3cb4856ea1650dc9f17d7562c603a578ea51597cd7b82401e74f9ffb66ce306b6478ef0c0d702de9f49c0a12613b8bea  rootfs-etc-conf.d-wpa_supplicant
+450bdde6eb64131fa553ce98b5478cbf4003bceabc2e5336c14b5670a31cdb3c600ae85fc760f26cf365e73cc9efedde08296df32c7e70cdca60918eca1d8af9  rootfs-etc-profile.d-pmos-path.sh
+6c4b4e573665c2985f23a4222cc0d3094851577e941c37badb813f78fe7d31480919abea345e3913d8161b26b393b7cd7a0c2ec552aa47715af3a8f3248e66b2  rootfs-etc-profile.d-qt-mobile-controls.sh
+e60bfff4ae4b246e9b31cfe1aab55b670b7bb49f670830846d623a6d7f21c6d5c8b90a62a8612b621c4b6122ff6c509be81e6e2bd95e522041e08c6f09c14736  rootfs-etc-profile.d-qt-wayland.sh
+6c516635a61fbaa93102f02301a75070a91de837456b07a50e24a9e0ee5dac785087d4a8f78906807719ebf6f0124127383441cccf00475d9a91d3dbaf9d4d81  rootfs-etc-pulse-default.pa.d-postmarketos.pa
+041e50a7f78f7f03153175027439fc203f3dc81ed9970c579a16728d36e006e77f49b0321ee4bb7bb127fa6e4c31de3e7029f80ea75c4afc83bae7d24906372d  rootfs-etc-sleep-inhibitor.conf
+cac604e25c46e695dd30bd5a10cfd2d69595fcc3bc290096ac94b76b10834d591ea6576afb79c46b5da492a1dbf8660cf87b6110cd39937e15237bc74fa7a5c6  rootfs-etc-X11-Xwrapper.config
+53a61899e0e2188e6fc6ee33c151e73078b7f6cb37d98fc820e17c75b4d2d9c0fdd6d782da896f656811f3a7c45c17216cf3fffb406bbdf639903389903f96d9  rootfs-usr-lib-NetworkManager-conf.d-50-connectivity.conf
+3c9ae7415f4891bee8595166ed6a42cb577a837f741c6b5409d193558626348b41516888a01d0c4895282c5f4e9a1ff838c19712888750b2ef68429bb4b42ee3  rootfs-usr-lib-NetworkManager-conf.d-50-hostname-mode.conf
+439615745d5be0d1ab6801cfbf960a31b12da30bf5df64ba2914ff32dae9e650595d7f96e66f5dff6308f092de1f746277ea7f4e701888a22571f7c119b7bf0d  rootfs-usr-lib-NetworkManager-conf.d-50-iwd.conf
+d4b4c4fed2dee7266f6a87ae266691377593014943e2953e4cd87a59f3110f25bfb5f3f866cc843519f628695e4df7602bfdcd3d79f2c2cd6e8256535c33b038  rootfs-usr-lib-NetworkManager-conf.d-50-random-mac.conf
+1d5fc7900f581067f66faf1e3534d93d0e8f0be5f26c5f40ff5b0f59b384a5e2e7e1829fe05ad1efea4768b9794a930ddacb8b5a1271c14eb0fd4e4858382c78  rootfs-usr-lib-NetworkManager-conf.d-50-wwan-policy.conf
+cc86775a7820eb683e67df7d23ebae9d72699a643ff1452c71daf38ac6c39a84fd1686e67351ab0a2c582f9fc0374410383e3a32bd378cf11a8fb6033fde35ac  rootfs-usr-lib-systemd-system-ModemManager.service.d-quick-suspend-resume.conf
+087b9e967f6ffeaeb1fd6c5860bb07d0b8c2ce2c1b636d73e989cc9f3c8c6a60dc9552ec5ff13a2bce6804c3f5e8876d4b41a07770f06f6cee0fa37a54f996b4  rootfs-usr-lib-systemd-system-iio-sensor-proxy.service.d-shutdown.conf
+1f0e33cc8d435d2d97863a8080eb5b6d476b6515b29707bd2f86fafa8af6c3bbdacc7cd0eeb9ed4735d31baa760846e734e33c0238165e9b1e8fee666323096d  rootfs-usr-lib-tmpfiles.d-alsa-utils.conf
+9431dd37801261002f2ac8a0c30483994897adaf7cb31e80fcb99b7354dbe3e10d79162a2f2baefc5d091bb192ff680f274d6481bb198958d08918529c64e26f  rootfs-usr-lib-udev-rules.d-50-udmabuf.rules
+178a8b584eb4d60eff084328713924f20414892e558559002fc753011ef4b0aa73c8abceb943f842c702ce31525a28c3e1cbdaac0392da557e9a034a6e7be7ae  rootfs-usr-lib-udev-rules.d-90-iio-sensor-proxy-proximity-sensor-enable.rules
+54620e508a5070ec8819e3661e592acfcfd26c52170b0ecc4dbbc1c61998963ce20bf9d9b051a608b76d6fc17e61c65decc16602b7d58061b9149667a968d258  rootfs-usr-share-flatpak-remotes.d-flathub.flatpakrepo
+3afbe4ddc324fe436384c689aa0ab4fa6e297eae94ebc5aadac2f4dff8b136e5f79208c4c802f5386774b3a735056cdcbb13d2271d50bbbaa140e2f0b1f5e961  rootfs-usr-share-pipewire-pipewire-pulse.conf.d-50-postmarketos.conf
+92930f027626825b027f585a9be180f8a6ebae6dc44d2cf8f9d43cce00db8cbb43c33fc341fe382abacb832ea1b6414dc4c8129d265b0258d096599b2e206a93  rootfs-usr-share-wireplumber-wireplumber.conf.d-50-bluetooth.conf
+66a7a72746e822676d0ec76160e39b65c711e574a6334f3aad38c563d3104b33d0619d50b92c9201546fd81bfd10cfe0e4a59278cbcbddf20a238f6ad71c050c  rootfs-usr-share-mkinitfs-files-10-wireless-regdb.files
+ecaa57d033a119a53a6574c27636b7c89d659d75ea48a973a6a4ff6f90e5d07202529fd489bfc9dfc7430f5b60f40612f6d5c06f7fab47e681b0a3112a874058  rootfs-usr-share-tinydm-env-wayland.d-50-sdl-wayland.sh
+"

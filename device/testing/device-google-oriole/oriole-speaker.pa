@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+# Local (oriole): the AoC speaker endpoint needs plain read/write transfers
+# (mmap=no) with period wakeups (tsched=no); with Pulse's defaults it plays
+# loud garbage. If the card is not there yet when PulseAudio starts,
+# oriole-pulse-speaker.service (user) loads this once it appears.
+.nofail
+load-module module-alsa-card device_id=googleaocsndcar name=platform-sound-aoc card_name=alsa_card.platform-sound-aoc profile_set=google-oriole-aoc.conf tsched=no mmap=no
+.fail

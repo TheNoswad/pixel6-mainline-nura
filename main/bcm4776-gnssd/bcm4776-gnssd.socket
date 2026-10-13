@@ -1,0 +1,13 @@
+[Unit]
+Description=NMEA socket of the BCM4776 GNSS daemon
+Documentation=file:///usr/share/doc/bcm4776-gnssd/README.md
+
+[Socket]
+# gnss-share's path and permissions: geoclue reads it ([network-nmea]
+# nmea-socket=) and decides which applications get the location
+ListenStream=/run/gnss-share.sock
+SocketMode=0660
+SocketGroup=geoclue
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Pixel 6 modem_userdata partition, read-only (never written from Linux, see
+# 61-oriole-stock-ro.rules in device-google-oriole).
+[Unit]
+Description=Pixel 6 modem_userdata partition (read-only)
+
+[Mount]
+What=/dev/disk/by-partlabel/modem_userdata
+Where=/run/oriole/modem_userdata
+Type=ext4
+Options=ro,noload,nodev,nosuid,noexec

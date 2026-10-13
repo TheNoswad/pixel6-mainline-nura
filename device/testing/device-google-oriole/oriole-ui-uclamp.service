@@ -1,0 +1,11 @@
+# Local: see /usr/libexec/oriole-ui-uclamp. Pulled in by the Phosh shell
+# (user session) and phrog (greeter); re-runs when either restarts.
+[Unit]
+Description=Utilization floor (uclamp.min) for the Phosh shell and phoc
+After=mobi.phosh.Shell.service mobi.phosh.Phrog.service
+PartOf=mobi.phosh.Shell.service mobi.phosh.Phrog.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/oriole-ui-uclamp

@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Local: switch to off-mode charging when the phone was powered on by a
+# charger being plugged in, like Android's charger mode. The bootloader
+# can't tell us (every boot of the flashed image has androidboot.mode =
+# "recovery"), so read the s2mpg10 PWRONSRC register (0x0e) instead:
+# 0x01 power key, 0x80 reboot, 0x04 charger plugged in (measured,
+# logs/bootsrc-r5.txt). Anything but exactly 0x04, or a failed read, boots
+# normally.
+# A RAM boot (fastboot boot, the only boot with force_normal_boot) always
+# boots normally: PWRONSRC is left over from the power-on before it.
+grep -q 'force_normal_boot = "1"' /proc/bootconfig 2>/dev/null && exit 0
+# PWRONSRC can still read 0x04 after a warm reboot while plugged in, so
+# every OS reboot leaves this marker (oriole-reboot-mark.service) to boot
+# normally once.
+mark=/var/lib/oriole-charger/reboot-normal
+if [ -e $mark ]; then
+	rm -f $mark
+	echo "reboot from charger mode: booting normally"
+	exit 0
+fi
+reg=/sys/kernel/debug/regmap/firmware:power-management:pmic-1-pmic/registers
+i=0
+while [ $i -lt 10 ] && [ ! -r $reg ]; do
+	sleep 1; i=$((i + 1))
+done
+src=$(sed -n 's/^0e: //p' $reg 2>/dev/null)
+echo "PWRONSRC=0x$src"
+[ "$src" = 04 ] || exit 0
+echo "charger power-on: switching to oriole-charger.target"
+# Short press shows the level (oriole-charger-monitor); long press reboots
+# out of charger mode (see the marker above).
+mkdir -p /run/systemd/logind.conf.d
+printf '[Login]\nHandlePowerKey=ignore\nHandlePowerKeyLongPress=reboot\n' \
+	> /run/systemd/logind.conf.d/50-oriole-charger.conf
+systemctl reload systemd-logind
+# bluetooth.service is started by udev when the chip appears; keep it off
+# for this boot only (/run).
+systemctl mask --runtime --now bluetooth.service
+exec systemctl --no-block isolate oriole-charger.target

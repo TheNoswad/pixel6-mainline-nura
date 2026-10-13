@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Off-mode charging (charger powered the phone on)
+Requires=basic.target
+Wants=systemd-logind.service oriole-charger.service sshd.service NetworkManager.service
+After=basic.target
+AllowIsolate=yes

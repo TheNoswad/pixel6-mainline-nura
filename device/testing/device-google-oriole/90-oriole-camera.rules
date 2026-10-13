@@ -1,0 +1,3 @@
+# libcamera's software ISP allocates from the system dma-buf heap; the
+# distro rules only cover udmabuf, which this kernel does not build.
+SUBSYSTEM=="dma_heap", KERNEL=="system", GROUP="video", MODE="0660"

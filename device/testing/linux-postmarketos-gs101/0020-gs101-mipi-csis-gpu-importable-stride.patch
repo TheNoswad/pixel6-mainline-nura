@@ -1,0 +1,57 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] media: gs101-mipi-csis: 64-byte-aligned stride for unpacked RAW10
+
+In the default 16-bit unpacked WDMA format the driver always forced
+bytesperline = width * 2 and ignored the stride the caller asked for.
+For the IMX355's modes that is 6560 (3280 px) or 2568 (1284 px), not
+64-byte multiples, so Mesa (panfrost) refuses to import the buffers and
+libcamera's GPU software ISP uploads every frame from the CPU instead
+(1080p from the full 3280x2464 mode: ~56 ms per frame, 15 fps).
+
+Honour a requested stride that covers the line and is a 64-byte
+multiple in that format too (libcamera asks for 6656 / 2816), and pad
+to a 64-byte multiple otherwise. The 0x1e layout keeps exactly
+width * 2; the packed 0x04 behaviour is unchanged.
+
+Verified with the module swapped in: the requested stride is used, the
+dma-buf import succeeds and 1080p runs at the sensor's 30 fps.
+---
+--- a/drivers/media/platform/samsung/gs101-mipi-csis.c
++++ b/drivers/media/platform/samsung/gs101-mipi-csis.c
+@@ -1654,6 +1654,7 @@
+ static void gs101_csis_set_pixfmt(struct gs101_csis *csis,
+ 				  struct v4l2_pix_format *pf)
+ {
++	u32 fmt = gs101_csis_effective_wdma_fmt(csis);
+ 	u32 w, h;
+ 
+ 	if (!gs101_csis_is_8bit(pf->pixelformat))	/* 8-bit kept when asked for (motion) */
+@@ -1704,12 +1705,24 @@
+ 		pf->sizeimage = pf->width * 2 * pf->height;
+ 		return;
+ 	}
+-	if (gs101_csis_effective_wdma_fmt(csis) == 0x04 &&
+-	    pf->bytesperline >= pf->width * 5 / 4 &&
+-	    !(pf->bytesperline % 64))
++	/*
++	 * 2026-10-11: the same holds for FMT 6 (16-bit unpacked, the front's
++	 * default): width*2 = 6560 for the IMX355's full 3280 px mode is not a
++	 * 64-byte multiple, so Mesa (panfrost) refuses to import the buffer
++	 * and the software ISP falls back to a CPU upload of every frame
++	 * (~55 ms per frame). Honour a 64-byte-multiple stride from the caller,
++	 * and pad to one otherwise.
++	 */
++	if (fmt == 0x1e)
++		pf->bytesperline = pf->width * 2;	/* exact: 4 px per 8 bytes */
++	else if (pf->bytesperline >= (fmt == 0x04 ? pf->width * 5 / 4
++						   : pf->width * 2) &&
++		 !(pf->bytesperline % 64))
+ 		;	/* keep the caller's stride */
+-	else
++	else if (fmt == 0x04)
+ 		pf->bytesperline = pf->width * 2;
++	else
++		pf->bytesperline = ALIGN(pf->width * 2, 64);
+ 	pf->sizeimage = pf->bytesperline * pf->height;
+ }
+ 

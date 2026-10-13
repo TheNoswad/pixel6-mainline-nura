@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+# The stock partitions are never written from Linux: the bootloader chain,
+# and the per-phone modem, efs and persist data (calibration, NV, IMEI).
+# Mark them read-only at the block layer so no mistake can change them.
+# 61-: after 60-persistent-storage.rules, which sets ID_PART_ENTRY_NAME.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", \
+  ENV{ID_PART_ENTRY_NAME}=="abl_[ab]|bl1_[ab]|bl2_[ab]|bl31_[ab]|pbl_[ab]|gsa_[ab]|ldfw_[ab]|tzsw_[ab]|dram_train_[ab]|dpm_[ab]|devinfo|efs|efs_backup|fips|frp|mfg_data|modem_[ab]|modem_userdata|persist", \
+  RUN+="/usr/sbin/blockdev --setro $devnode"

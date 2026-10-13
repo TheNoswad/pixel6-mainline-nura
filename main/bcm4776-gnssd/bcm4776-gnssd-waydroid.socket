@@ -1,0 +1,18 @@
+[Unit]
+Description=NMEA socket of the BCM4776 GNSS daemon for Waydroid
+Documentation=file:///usr/share/doc/bcm4776-gnssd/README.md
+
+[Socket]
+# Bound into the Waydroid container (/dev/waydroid-gnss) and read there by
+# the Waydroid GNSS HAL (android/gnss-hal), which runs as Android's gps
+# user. waydroid-gps is gid 1021 = AID_GPS (sysusers.d of
+# bcm4776-gnssd-waydroid), so Android apps can't read it: they go through
+# the Android location permissions instead.
+ListenStream=/run/waydroid-gnss/nmea.sock
+SocketMode=0660
+SocketGroup=waydroid-gps
+DirectoryMode=0755
+Service=bcm4776-gnssd.service
+
+[Install]
+WantedBy=sockets.target

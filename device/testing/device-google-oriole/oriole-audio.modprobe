@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Local (oriole): aoc_char is a catch-all AoC service driver; if it registers
+# before aoc_alsa it claims every audio service and the sound card never
+# binds.
+softdep aoc_char_dev pre: aoc_alsa_dev aoc_control_dev aoc_channel_dev

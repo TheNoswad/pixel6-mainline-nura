@@ -1,0 +1,85 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] bootmac: prefer bootloader-provided addresses from /chosen/config
+
+Google's Pixel bootloader passes the factory-provisioned addresses as
+strings in /proc/device-tree/chosen/config/{bt_addr,wlan_mac1}. Use
+them when present and only generate an address as a fallback. Also do
+nothing when an interface already has the wanted address, so a driver
+reload (e.g. bcmdhd around suspend) doesn't bounce the link.
+---
+--- a/bootmac	2026-10-11 01:37:49.130921798 -0500
++++ b/bootmac	2026-10-11 01:38:03.352295863 -0500
+@@ -122,6 +122,23 @@
+     exit 1
+ fi
+ 
++# Some bootloaders (e.g. Google's Pixel ABL) pass the factory-provisioned
++# addresses as strings in the device tree, under /chosen/config.
++DT_CONFIG="/proc/device-tree/chosen/config"
++
++mac_from_dt() {
++    [ -r "$DT_CONFIG/$1" ] || return 0
++    tr -d '\0' < "$DT_CONFIG/$1" | tr 'A-F' 'a-f' | grep -E '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || true
++}
++
++mac_bootloader() {
++    WLAN_MAC=$(mac_from_dt wlan_mac1)
++    BT_MAC=$(mac_from_dt bt_addr)
++    [ -n "$WLAN_MAC" ] && log "using bootloader-provided WLAN MAC"
++    [ -n "$BT_MAC" ] && log "using bootloader-provided Bluetooth MAC"
++    return 0
++}
++
+ mac_generate() {
+     # Try to retrieve the serial number from the cmdline
+     log "retrieving device serial number"
+@@ -142,14 +159,22 @@
+     fi
+ 
+     log "generating MAC addresses"
+-    WLAN_MAC=$(echo "$SERIAL_NUMBER-WLAN" | sha256sum | awk -v prefix="$MAC_PREFIX" '{printf("%s%010s\n", prefix, $1)}')    
+-    WLAN_MAC=$(echo "$WLAN_MAC" | cut -c1-12 | sed 's/\(..\)/\1:/g' | sed '$s/:$//')
++    WLAN_GEN=$(echo "$SERIAL_NUMBER-WLAN" | sha256sum | awk -v prefix="$MAC_PREFIX" '{printf("%s%010s\n", prefix, $1)}')    
++    WLAN_GEN=$(echo "$WLAN_GEN" | cut -c1-12 | sed 's/\(..\)/\1:/g' | sed '$s/:$//')
+ 
+-    BT_MAC=$(echo "$SERIAL_NUMBER-BT" | sha256sum | awk -v prefix="$MAC_PREFIX" '{printf("%s%010s\n", prefix, $1)}')
+-    BT_MAC=$(echo "$BT_MAC" | cut -c1-12 | sed 's/\(..\)/\1:/g' | sed '$s/:$//')
++    BT_GEN=$(echo "$SERIAL_NUMBER-BT" | sha256sum | awk -v prefix="$MAC_PREFIX" '{printf("%s%010s\n", prefix, $1)}')
++    BT_GEN=$(echo "$BT_GEN" | cut -c1-12 | sed 's/\(..\)/\1:/g' | sed '$s/:$//')
++
++    [ -z "$WLAN_MAC" ] && WLAN_MAC="$WLAN_GEN"
++    [ -z "$BT_MAC" ] && BT_MAC="$BT_GEN"
++    return 0
+ }
+ 
+ mac_bluetooth() {
++    if hciconfig "$BT_INTERFACE" 2>/dev/null | grep -qi "BD Address: $BT_MAC"; then
++        log "Bluetooth MAC is already $BT_MAC"
++        return 0
++    fi
+     log "setting Bluetooth MAC to $BT_MAC"
+ 
+     # Check if the Bluetooth interface is up
+@@ -194,6 +219,10 @@
+ }
+ 
+ mac_wlan() {
++    if [ "$(cat "/sys/class/net/$WLAN_INTERFACE/address" 2>/dev/null)" = "$WLAN_MAC" ]; then
++        log "WLAN MAC is already $WLAN_MAC"
++        return 0
++    fi
+     log "setting WLAN MAC to $WLAN_MAC"
+ 
+     # Save current rfkill status, may return a non-zero exit code when blocked
+@@ -228,7 +257,10 @@
+     fi
+ }
+ 
+-mac_generate
++mac_bootloader
++if [ -z "$WLAN_MAC" ] || [ -z "$BT_MAC" ]; then
++    mac_generate
++fi
+ 
+ if [ "$GENERATE_ONLY_ARG" = 1 ]; then
+     if [ "$WLAN_CONFIGURE_ARG" = 1 ]; then

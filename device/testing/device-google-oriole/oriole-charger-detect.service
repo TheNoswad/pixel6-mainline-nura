@@ -1,0 +1,10 @@
+[Unit]
+Description=Enter off-mode charging if a charger powered the phone on
+After=sys-kernel-debug.mount systemd-modules-load.service systemd-logind.service
+Before=display-manager.service
+ConditionKernelCommandLine=!oriole.nocharger
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/oriole-charger-detect
+TimeoutStartSec=30

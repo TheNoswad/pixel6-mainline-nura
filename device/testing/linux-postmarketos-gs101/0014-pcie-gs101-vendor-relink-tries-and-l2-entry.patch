@@ -1,0 +1,167 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] PCI: gs101: vendor relink retry timing, PME_Turn_Off before
+ power-off
+
+Match the vendor exynos_pcie_rc_establish_link() / _poweroff() sequence:
+- 10 relink tries of 50 ms (was 4 x 500 ms). A try that misses never sees
+  the endpoint however long it waits, a new PERST# cycle does, and the CP
+  drops PHONE_ACTIVE ~1 s after raising CP2AP_WAKEUP.
+- Send PME_Turn_Off and wait for L2 before PERST# on power-off, so the CP
+  gets a real L2 entry instead of a surprise link down.
+Local.
+---
+diff --git drivers/pci/controller/dwc/pcie-gs101.c drivers/pci/controller/dwc/pcie-gs101.c
+index 8d3a586..4c9a546 100644
+--- a/drivers/pci/controller/dwc/pcie-gs101.c
++++ b/drivers/pci/controller/dwc/pcie-gs101.c
+@@ -38,12 +38,16 @@
+ #define PCIE_APP_REQ_EXIT_L1_MODE	0x3bc
+ #define   APP_REQ_EXIT_L1_MODE		BIT(0)
+ #define   L1_REQ_NAK_CONTROL_MASTER	BIT(4)
++#define PCIE_IRQ0			0x000
++#define   IRQ_RADM_PM_TO_ACK		BIT(29)
+ #define PCIE_IRQ2			0x008
+ #define   IRQ_MSI_RISING_ASSERT		BIT(17)
+ #define PCIE_IRQ2_EN			0x018
+ #define   IRQ_MSI_CTRL_EN_RISING_EDG	BIT(17)
+ /* vendor pcie-exynos-rc.h, used when relinking after a power-off */
++#define PCIE_APP_REQ_EXIT_L1		0x06c
+ #define PCIE_DEVICE_TYPE		0x080
++#define PCIE_XMIT_PME_TURNOFF		0x118
+ #define   DEVICE_TYPE_RC		0x4
+ #define PCIE_SOFT_RESET			0x3a4
+ #define   SOFT_PWR_RESET		BIT(1)
+@@ -53,6 +57,7 @@
+ #define S_RCVRY_LOCK			0x0d
+ #define S_L0				0x11
+ #define S_L1_IDLE			0x14
++#define S_L2_IDLE			0x15
+ 
+ /* PMU PCIE_PHY_CONTROL bits */
+ #define PCIE_PHY_ISOLATION		BIT(0)
+@@ -79,14 +84,21 @@ struct gs101_pcie {
+ #define to_gs101_pcie(x)	dev_get_drvdata((x)->dev)
+ 
+ /*
+- * exynos_pcie_poweron() link training: tries and wait per try. Training
+- * itself takes ~25 ms, but now and then the endpoint is not detected yet
+- * (LTSSM stays in Detect) when a try starts; give each try 500 ms before
+- * re-asserting PERST# and starting over (was 150 ms x 5: a run of those
+- * failures ended with the CP dropping PHONE_ACTIVE, 2026-10-09).
++ * exynos_pcie_poweron() link training: tries and wait per try, as the
++ * vendor's exynos_pcie_rc_establish_link() does (10 tries, MAX_TIMEOUT 4800
++ * x 10 us polls). A good relink reaches L0 ~15 ms after PERST# release
++ * (35 ms in all). A try that misses never detects the endpoint however long
++ * it waits (LTSSM 0x0 for the whole try); a fresh PERST# cycle does. The CP
++ * drops PHONE_ACTIVE ~1 s after it raised CP2AP_WAKEUP, so retry fast: 500 ms
++ * x 4 fitted only two tries in that second (CP crash under ModemManager,
++ * 2026-10-10).
+  */
+-#define GS101_RELINK_TRIES	4
+-#define GS101_RELINK_WAIT_MS	500
++#define GS101_RELINK_TRIES	10
++#define GS101_RELINK_WAIT_US	50000
++#define GS101_RELINK_POLL_US	500
++
++/* PME_Turn_Off ack and L2 entry waits, vendor MAX_L2_TIMEOUT x 10 us */
++#define GS101_L2_WAIT_US	20000
+ 
+ /*
+  * The Samsung CP interface driver addresses root complexes by channel number
+@@ -622,10 +634,10 @@ retry:
+ 		/* ret = dw_pcie_wait_for_link(&pcie->pci); */
+ 		/* if (ret) */
+ 		/*	return ret; */
+-		for (i = 0; i < GS101_RELINK_WAIT_MS / 10; i++) {
++		for (i = 0; i < GS101_RELINK_WAIT_US / GS101_RELINK_POLL_US; i++) {
+ 			if (gs101_pcie_link_up(&pcie->pci))
+ 				break;
+-			usleep_range(10000, 11000);
++			usleep_range(GS101_RELINK_POLL_US, GS101_RELINK_POLL_US + 50);
+ 		}
+ 		if (!gs101_pcie_link_up(&pcie->pci)) {
+ 			enum dw_pcie_ltssm ltssm = dw_pcie_get_ltssm(&pcie->pci);
+@@ -639,7 +651,7 @@ retry:
+ 			gpiod_set_value_cansleep(pcie->perst, 1);
+ 			pcie->link_was_up = true;
+ 			if (++try_cnt < GS101_RELINK_TRIES) {
+-				dev_warn(pcie->pci.dev, "relink: no link (LTSSM 0x%x), retrying\n",
++				dev_warn_ratelimited(pcie->pci.dev, "relink: no link (LTSSM 0x%x), retrying\n",
+ 					 ltssm);
+ 				goto retry;
+ 			}
+@@ -647,6 +659,9 @@ retry:
+ 				try_cnt);
+ 			return -ENODEV;
+ 		}
++		if (try_cnt)
++			dev_info(pcie->pci.dev, "relink: link up on try %d\n",
++				 try_cnt + 1);
+ 		/* reports speed/width; returns at once now that the link is up */
+ 		ret = dw_pcie_wait_for_link(&pcie->pci);
+ 		if (ret)
+@@ -691,6 +706,56 @@ int exynos_pcie_poweroff(int ch_num)
+ 	return 0;
+ }
+ */
++/*
++ * Put the link into L2 before PERST#, as the vendor's
++ * exynos_pcie_rc_send_pme_turn_off() does on every power-off: send
++ * PME_Turn_Off, wait for the endpoint's PME_TO_Ack, then for its
++ * Enter_L23_Ready (LTSSM L2_IDLE). Without it the CP only ever saw a surprise
++ * link down when it went to sleep, and the next relink now and then found no
++ * endpoint at all.
++ */
++static void gs101_pcie_send_pme_turn_off(struct gs101_pcie *pcie)
++{
++	struct device *dev = pcie->pci.dev;
++	u32 val;
++	int i;
++
++	if (!gs101_pcie_link_up(&pcie->pci))
++		return;
++
++	/* clear a stale ack from the last power-off (write-1-to-clear) */
++	gs101_elbi_write(pcie, IRQ_RADM_PM_TO_ACK, PCIE_IRQ0);
++
++	gs101_elbi_write(pcie, 0x1, PCIE_APP_REQ_EXIT_L1);
++	val = gs101_elbi_read(pcie, PCIE_APP_REQ_EXIT_L1_MODE);
++	val &= ~APP_REQ_EXIT_L1_MODE;
++	val |= L1_REQ_NAK_CONTROL_MASTER;
++	gs101_elbi_write(pcie, val, PCIE_APP_REQ_EXIT_L1_MODE);
++
++	gs101_elbi_write(pcie, 0x1, PCIE_XMIT_PME_TURNOFF);
++	for (i = 0; i < GS101_L2_WAIT_US / 10; i++) {
++		if (gs101_elbi_read(pcie, PCIE_IRQ0) & IRQ_RADM_PM_TO_ACK)
++			break;
++		udelay(10);
++	}
++	if (i == GS101_L2_WAIT_US / 10)
++		dev_warn_ratelimited(dev, "power-off: no PME_TO_Ack from the endpoint\n");
++	udelay(10);
++	gs101_elbi_write(pcie, 0x0, PCIE_XMIT_PME_TURNOFF);
++
++	for (i = 0; i < GS101_L2_WAIT_US / 10; i++) {
++		val = gs101_elbi_read(pcie, PCIE_ELBI_RDLH_LINKUP) & LTSSM_STATE_MASK;
++		if (val == S_L2_IDLE)
++			break;
++		udelay(10);
++	}
++	if (i == GS101_L2_WAIT_US / 10)
++		dev_warn_ratelimited(dev, "power-off: no L2 entry (LTSSM 0x%x)\n", val);
++
++	gs101_elbi_write(pcie, IRQ_RADM_PM_TO_ACK, PCIE_IRQ0);
++	gs101_elbi_write(pcie, 0x0, PCIE_APP_REQ_EXIT_L1);
++}
++
+ int exynos_pcie_poweroff(int ch_num)
+ {
+ 	struct gs101_pcie *pcie = gs101_pcie_get_ch(ch_num);
+@@ -698,6 +763,7 @@ int exynos_pcie_poweroff(int ch_num)
+ 	if (!pcie)
+ 		return -ENODEV;
+ 
++	gs101_pcie_send_pme_turn_off(pcie);
+ 	dw_pcie_stop_link(&pcie->pci);
+ 	gpiod_set_value_cansleep(pcie->perst, 1);
+ 	/* the next exynos_pcie_poweron() has to redo the PHY */

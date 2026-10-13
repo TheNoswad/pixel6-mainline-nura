@@ -1,0 +1,72 @@
+From a9a5ed4c57364e738244423227bd62e70c6f80ab Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 01:28:49 -0500
+Subject: [PATCH] service-providers: match the APN case-insensitively
+
+APNs are not case sensitive (3GPP TS 23.003 9.1), and the modem may
+report the context APN with a different case than the provider
+database (e.g. "Wholesale" vs "wholesale" for T-Mobile MVNOs), which
+left the settings unconfigured. The modemmanager plugin already
+compares the bearer APN case-insensitively.
+---
+ src/service-providers.c       |  4 +++-
+ unit/test-service-providers.c | 20 ++++++++++++++++++++
+ 2 files changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/src/service-providers.c b/src/service-providers.c
+index bd51a54..5832309 100644
+--- a/src/service-providers.c
++++ b/src/service-providers.c
+@@ -252,8 +252,10 @@ parser_gsm_apn_end (ParseContext *parse_context,
+   else if (strcmp (name, "apn") == 0)
+     {
+       g_clear_pointer (&parse_context->text_buffer, g_free);
++      /* APNs are not case sensitive (3GPP TS 23.003 9.1) */
+       if (parse_context->mccmnc_matched &&
+-          g_strcmp0 (parse_context->apn_to_check, parse_context->apn) == 0 &&
++          parse_context->apn_to_check && parse_context->apn &&
++          g_ascii_strcasecmp (parse_context->apn_to_check, parse_context->apn) == 0 &&
+           parse_context->mmsc != NULL)
+         parse_context->state = PARSER_DONE;
+       else
+diff --git a/unit/test-service-providers.c b/unit/test-service-providers.c
+index 1faa305..bee4cbe 100644
+--- a/unit/test-service-providers.c
++++ b/unit/test-service-providers.c
+@@ -48,6 +48,25 @@ test_seperate_mms_apn (void)
+   g_main_loop_unref (loop);
+ }
+ 
++/*
++ * APNs are not case sensitive: the modem may report the APN with a different
++ * case than the database has.
++ */
++static void
++test_mms_apn_case (void)
++{
++  GMainLoop *loop = g_main_loop_new (NULL, FALSE);
++
++  mmsd_service_providers_find_settings (SOURCE_ROOT
++                                        "/unit/test-service-providers.xml",
++                                        "133666",
++                                        "MMS",
++                                        test_seperate_mms_apn_cb,
++                                        loop);
++  g_main_loop_run (loop);
++  g_main_loop_unref (loop);
++}
++
+ /*****************************************************************************/
+ 
+ static void
+@@ -235,6 +254,7 @@ main (int    argc,
+   g_test_init (&argc, &argv, NULL);
+ 
+   g_test_add_func ("/service-providers/seperate_mms_apn", test_seperate_mms_apn);
++  g_test_add_func ("/service-providers/mms_apn_case", test_mms_apn_case);
+   g_test_add_func ("/service-providers/combined_mms_apn", test_combined_mms_apn);
+   g_test_add_func ("/service-providers/missing_mmsc_apn", test_missing_mmsc_apn);
+   g_test_add_func ("/service-providers/missing_mmsc_apn_two", test_missing_mmsc_apn_two);
+-- 
+2.55.0
+

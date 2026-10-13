@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Android's gps group (AID_GPS): the HAL in the container runs with this gid
+# and the host's NMEA socket for it (/run/waydroid-gnss) is group-owned by it.
+# The HAL itself is built separately (android/gnss-hal).
+g waydroid-gps 1021 - -

@@ -1,0 +1,33 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Local: give the Phosh shell (phosh, or phrog on the greeter) and its
+# compositor a utilization floor (uclamp.min). With
+# sched_util_clamp_min_rt_default=0 (90-oriole-sched.conf) the shell lags:
+# it lands on the little cores (capacity 157) at low clocks. 300 places it on
+# the mid cores at moderate clocks and only costs power while it runs.
+# Reset-on-fork keeps the boost off apps the shell launches and off threads
+# created later. uclampset -R does not set it (the kernel ignores the flag
+# together with SCHED_FLAG_KEEP_POLICY), so chrt sets it first; uclampset
+# keeps it.
+V=300
+u=$(id -u)
+# phrog's unit is Type=simple: wait for the process to exist.
+i=0
+while ! pgrep -u "$u" -x 'phosh|phrog' >/dev/null && [ $i -lt 50 ]; do
+	sleep 0.1; i=$((i + 1))
+done
+# Per thread rather than -a: the shell starts and ends short-lived threads
+# while it comes up, and -a gives up (exit 1) on the first one that is gone.
+# Only the main thread must take the floor.
+rc=0
+for p in $(pgrep -u "$u" -x 'phoc|phosh|phrog'); do
+	for t in /proc/"$p"/task/*; do
+		t=${t##*/}
+		chrt -R -o -p 0 "$t" 2>/dev/null && uclampset -m $V -p "$t" 2>/dev/null
+	done
+	uclampset -p "$p" | grep -q "min: $V " || {
+		echo "pid $p: uclamp.min not set" >&2
+		rc=1
+	}
+done
+exit $rc

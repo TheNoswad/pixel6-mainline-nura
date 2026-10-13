@@ -1,0 +1,31 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Load this phone's factory haptics calibration (persist haptics/cs40l25a.cal,
+# "f0_measured: N" lines) into the CS40L25A, like the stock vibrator HAL:
+# f0, ReDC and Q go to the driver's f0_stored, redc_stored and q_stored. The
+# DT only has the stock defaults. The DSP takes them once its firmware is
+# up, so retry for a while after the device appears.
+CAL=/run/oriole/persist/haptics/cs40l25a.cal
+
+log() { echo "oriole-haptics-cal: $*"; }
+val() { sed -n "s/^$1: *\([0-9][0-9]*\)\$/\1/p" "$CAL"; }
+
+f0=$(val f0_measured) redc=$(val redc_measured) q=$(val q_measured)
+if [ -z "$f0" ] || [ -z "$redc" ] || [ -z "$q" ]; then
+	log "no calibration in $CAL, keeping the defaults"
+	exit 1
+fi
+
+for i in $(seq 60); do
+	for d in /sys/bus/i2c/drivers/cs40l2x/*-0043/input/input*; do
+		[ -e "$d/f0_stored" ] || continue
+		if echo "$f0" > "$d/f0_stored" && echo "$redc" > "$d/redc_stored" &&
+		   echo "$q" > "$d/q_stored"; then
+			log "loaded f0 $f0, redc $redc, q $q"
+			exit 0
+		fi
+	done 2>/dev/null
+	sleep 1
+done
+log "timed out writing the calibration"
+exit 1

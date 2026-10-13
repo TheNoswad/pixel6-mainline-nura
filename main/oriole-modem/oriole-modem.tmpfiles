@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# rfsd's writable copies (efs, runtime NV)
+d /var/lib/oriole-modem 0700 root root -
+# NV set tinycbd boots the CP with: the phone's own, straight from the
+# read-only partitions
+d /run/oriole-modem 0700 root root -
+d /run/oriole-modem/nv 0700 root root -
+L /run/oriole-modem/nv/nv_normal.bin - - - - /run/oriole/efs/nv_normal.bin
+L /run/oriole-modem/nv/nv_protected.bin - - - - /run/oriole/efs/nv_protected.bin
+L /run/oriole-modem/nv/replay_region.bin - - - - /run/oriole/modem_userdata/replay_region.bin

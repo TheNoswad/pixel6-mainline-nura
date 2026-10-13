@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Unit]
+Description=Pixel 6 modem CP boot (tinycbd)
+Requires=oriole-modem-rfsd.service
+After=oriole-modem-rfsd.service systemd-tmpfiles-setup.service
+RequiresMountsFor=/run/oriole/modem /run/oriole/efs /run/oriole/modem_userdata /run/oriole/persist
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The CP firmware and NV are the phone's own (modem_a, efs, modem_userdata),
+# the handover block gets cpsha from persist. cpif is loaded (after the GPU
+# is up) by oriole-modem-rfsd.service.
+Environment=MODEM_BIN=/run/oriole/modem/images/default/modem.bin
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/tinycbd -i ${MODEM_BIN} -n /run/oriole-modem/nv -p /run/oriole/persist/modem full
+# ModemManager (plugin "shannon") only sees umts_ipc0 while this flag exists
+# (77-mm-shannon.rules): set it once the CP is up, drop it before poweroff
+ExecStartPost=/bin/sh -c 'touch /run/shannon-cp-online; udevadm trigger --action=change --subsystem-match=cpif --subsystem-match=net'
+ExecStop=/bin/sh -c 'rm -f /run/shannon-cp-online; udevadm trigger --action=change --subsystem-match=cpif --subsystem-match=net; udevadm settle -t 5; sleep 1'
+ExecStop=/usr/bin/tinycbd -i ${MODEM_BIN} poweroff
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

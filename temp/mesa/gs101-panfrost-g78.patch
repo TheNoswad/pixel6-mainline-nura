@@ -1,0 +1,40 @@
+diff -ru a/src/gallium/drivers/panfrost/pan_resource.c b/src/gallium/drivers/panfrost/pan_resource.c
+--- a/src/gallium/drivers/panfrost/pan_resource.c	2026-10-07 00:04:53.622926689 -0500
++++ b/src/gallium/drivers/panfrost/pan_resource.c	2026-10-07 00:04:53.638126716 -0500
+@@ -847,6 +847,9 @@
+    unsigned bytes_per_pixel = MAX2(pres->base.nr_samples, 1) *
+                               util_format_get_blocksize(pres->base.format);
+ 
++   if (dev->model->quirks.no_crc)
++      return false;
++
+    return pres->base.bind & PIPE_BIND_RENDER_TARGET && panfrost_is_2d(pres) &&
+           bytes_per_pixel <= bytes_per_pixel_max &&
+           !(dev->debug & PAN_DBG_NO_CRC);
+diff -ru a/src/panfrost/model/pan_model.c b/src/panfrost/model/pan_model.c
+--- a/src/panfrost/model/pan_model.c	2026-10-07 00:04:53.621419739 -0500
++++ b/src/panfrost/model/pan_model.c	2026-10-07 00:04:53.637922180 -0500
+@@ -85,6 +85,10 @@
+                                               MODEL_RATES_X(2, 4, 8,  32,  32, 8)),
+    VALHALL_MODEL(PAN_PROD_ID(9, 0, 3), 0, "G57",    "G77", MODEL_ANISO(ALL),  MODEL_TB_SIZES(16384,  8192),
+                                               MODEL_RATES_X(2, 4, 8,  32,  32, 8)),
++   /* Google Tensor (gs101) Mali-G78 MP20, GPU ID 0x9202 */
++   VALHALL_MODEL(PAN_PROD_ID(9, 2, 2), 0, "G78",    "G77", MODEL_ANISO(ALL),  MODEL_TB_SIZES(16384,  8192),
++                                              MODEL_RATES_X(2, 4, 8,  32,  32, 8),
++                                              MODEL_QUIRKS( .no_crc = true )),
+    VALHALL_MODEL(PAN_PROD_ID(10, 8, 7), 0, "G610",   "G710", MODEL_ANISO(ALL),  MODEL_TB_SIZES(32768, 16384),
+                                               MODEL_RATES_X(4, 8, 16,  64,  64, 16)),
+    /* var/cvt/sfu rates might not be correct (we haven't found any detailed documentation) */
+diff -ru a/src/panfrost/model/pan_model.h b/src/panfrost/model/pan_model.h
+--- a/src/panfrost/model/pan_model.h	2026-10-07 00:04:53.622099457 -0500
++++ b/src/panfrost/model/pan_model.h	2026-10-07 00:04:53.637855298 -0500
+@@ -88,6 +88,9 @@
+        */
+       bool no_hierarchical_tiling;
+       bool max_4x_msaa;
++
++      /* Transaction elimination (tile CRCs) corrupts rendering */
++      bool no_crc;
+    } quirks;
+ };
+ 

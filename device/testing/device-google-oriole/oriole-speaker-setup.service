@@ -1,0 +1,14 @@
+[Unit]
+Description=Pixel 6 speaker amp setup (protection firmware and calibration)
+# sound.target is pulled in when a sound card appears; the script waits for
+# the amp controls itself.
+After=sound.target
+RequiresMountsFor=/run/oriole/persist
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/oriole-speaker-setup
+
+[Install]
+WantedBy=sound.target

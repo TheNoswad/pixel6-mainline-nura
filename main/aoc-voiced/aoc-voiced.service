@@ -1,0 +1,27 @@
+[Unit]
+Description=Voice call PCMs for the Google AoC sound card
+Documentation=file:///usr/share/doc/aoc-voiced/README.md
+After=dbus.service sound.target
+Wants=ModemManager.service
+
+[Service]
+ExecStart=/usr/bin/aoc-voiced
+Restart=on-failure
+DynamicUser=yes
+SupplementaryGroups=audio
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

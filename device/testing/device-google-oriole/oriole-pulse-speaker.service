@@ -1,0 +1,9 @@
+[Unit]
+Description=Load the Pixel 6 speaker into PulseAudio once the AoC card exists
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/oriole-pulse-speaker
+
+[Install]
+WantedBy=default.target

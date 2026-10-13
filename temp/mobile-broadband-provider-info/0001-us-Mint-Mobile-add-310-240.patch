@@ -1,0 +1,27 @@
+From 42fcd65211446be74c579bddd81608343d46ce05 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 01:29:08 -0500
+Subject: [PATCH] us: Mint Mobile: add 310 240
+
+Mint Mobile SIMs carry a 310240 IMSI (310260 is the network they
+register on), so a lookup by the SIM's operator ID did not find the
+wholesale APN and its MMSC.
+---
+ serviceproviders.xml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/serviceproviders.xml b/serviceproviders.xml
+index 8ba1e03..77aceff 100644
+--- a/serviceproviders.xml
++++ b/serviceproviders.xml
+@@ -14436,6 +14436,7 @@ conceived.
+ 	<provider primary="false">
+ 		<name>Mint Mobile</name>
+ 		<gsm>
++			<network-id mcc="310" mnc="240"/>
+ 			<network-id mcc="310" mnc="260"/>
+ 			<visual-voicemail>
+ 				<standard type="cvvm"/>
+-- 
+2.55.0
+

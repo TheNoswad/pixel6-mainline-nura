@@ -1,0 +1,90 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] PCI: gs101: re-arm the MSI receiver after demuxing
+
+ELBI IRQ2 latches only a rising edge of the iMSI-RX output, which is the OR
+of all unmasked pending vectors. An MSI arriving as the core clears STATUS
+can leave that output high with no edge seen: STATUS stays set, IRQ2 stays
+clear and the vector is deaf for good. bcmdhd hit this ~2x/day (ioctl
+timeout with the completion already in its ring, then HANG). Caught live
+2026-10-12: STATUS=0x1 MASK=0xfffffffe IRQ2 bit 17 clear; masking and
+unmasking all vectors by hand raised the edge and the IRQ fired.
+
+Mask/unmask every vector after dw_handle_msi_irq() so anything still
+pending raises a fresh edge (the vendor driver does the same), and
+implement exynos_pcie_rc_print_msi_register() for bcmdhd/cpif dumps.
+Local.
+---
+diff --git a/drivers/pci/controller/dwc/pcie-gs101.c b/drivers/pci/controller/dwc/pcie-gs101.c
+index 4c9a546..4d6dbbe 100644
+--- a/drivers/pci/controller/dwc/pcie-gs101.c
++++ b/drivers/pci/controller/dwc/pcie-gs101.c
+@@ -284,6 +284,32 @@ static void gs101_pcie_setup_elbi(struct gs101_pcie *pcie)
+ 	}
+ }
+ 
++/*
++ * IRQ2 only latches a rising edge of the iMSI-RX output, and that output is
++ * the OR of every unmasked pending vector. An MSI that lands just as the core
++ * clears STATUS can leave the output high without the edge ever being seen:
++ * STATUS stays set, IRQ2 stays clear and the vector never interrupts again
++ * (bcmdhd: ioctl timeout with the completion sitting in its ring, 2026-10-12,
++ * STATUS=0x1 MASK=0xfffffffe IRQ2 bit 17 clear). Mask and unmask everything
++ * after demuxing so anything still pending raises a fresh edge. The vendor
++ * driver does the same after its MSI handler.
++ */
++static void gs101_pcie_msi_rearm(struct gs101_pcie *pcie)
++{
++	struct dw_pcie_rp *pp = &pcie->pci.pp;
++	struct dw_pcie *pci = &pcie->pci;
++	unsigned int i, num_ctrls = pp->num_vectors / MAX_MSI_IRQS_PER_CTRL;
++
++	guard(raw_spinlock_irqsave)(&pp->lock);
++	for (i = 0; i < num_ctrls; i++) {
++		u32 off = PCIE_MSI_INTR0_MASK + i * MSI_REG_CTRL_BLOCK_SIZE;
++
++		dw_pcie_writel_dbi(pci, off, ~0);
++		dw_pcie_readl_dbi(pci, off);		/* post before unmasking */
++		dw_pcie_writel_dbi(pci, off, pp->irq_mask[i]);
++	}
++}
++
+ static irqreturn_t gs101_pcie_irq_handler(int irq, void *arg)
+ {
+ 	struct gs101_pcie *pcie = arg;
+@@ -301,8 +327,10 @@ static irqreturn_t gs101_pcie_irq_handler(int irq, void *arg)
+ 	val = gs101_elbi_read(pcie, PCIE_IRQ2);
+ 	gs101_elbi_write(pcie, val, PCIE_IRQ2);		/* write-1-to-clear */
+ 
+-	if (val & IRQ_MSI_RISING_ASSERT)
++	if (val & IRQ_MSI_RISING_ASSERT) {
+ 		dw_handle_msi_irq(pp);
++		gs101_pcie_msi_rearm(pcie);
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -827,6 +855,24 @@ EXPORT_SYMBOL_GPL(register_separated_msi_vector);
+ 
+ void exynos_pcie_rc_print_msi_register(int ch_num)
+ {
++	struct gs101_pcie *pcie = gs101_pcie_get_ch(ch_num);
++	struct dw_pcie *pci;
++
++	if (!pcie)
++		return;
++
++	pci = &pcie->pci;
++	if (!gs101_pcie_link_up(pci)) {
++		dev_info(pci->dev, "MSI: link down\n");
++		return;
++	}
++
++	dev_info(pci->dev, "MSI: IRQ2 %#010x IRQ2_EN %#010x EN %#010x MASK %#010x STATUS %#010x\n",
++		 gs101_elbi_read(pcie, PCIE_IRQ2),
++		 gs101_elbi_read(pcie, PCIE_IRQ2_EN),
++		 dw_pcie_readl_dbi(pci, PCIE_MSI_INTR0_ENABLE),
++		 dw_pcie_readl_dbi(pci, PCIE_MSI_INTR0_MASK),
++		 dw_pcie_readl_dbi(pci, PCIE_MSI_INTR0_STATUS));
+ }
+ EXPORT_SYMBOL_GPL(exynos_pcie_rc_print_msi_register);
+ 

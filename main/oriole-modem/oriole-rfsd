@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Minimal RFS (remote file system) server for the s5123 CP on /dev/umts_rfs0.
+# Own implementation of the wire protocol of the stock rfsd.
+#
+# The stock partitions are only read (they are mounted read-only by
+# oriole-modem's mount units and marked read-only at the block layer):
+#   - confpack/carrierconfig reads come from the modem partition
+#     (/run/oriole/modem).
+#   - every other path (relative paths live under /mnt/vendor/efs/ on stock)
+#     goes to a writable copy of efs, /var/lib/oriole-modem/efs, seeded
+#     from /run/oriole/efs on the first start.
+#   - NV ids 1/2/3 use writable copies in /var/lib/oriole-modem/nv
+#     (tinycbd always boots the CP with the pristine NV from efs).
+#
+# Wire format (little endian):
+#   header   u16 cmd, u16 seq, u32 len (bytes after the 8-byte header)
+#   CP->AP   1 = read-chunk ack {status, id}
+#            2 = write-chunk data {status, id, size, data}
+#            3 = status {status, id}
+#            4 = OPEN {id, ?, char path[256], u32 flags @+0x108} (short = 0x42)
+#            5 = CLOSE {id}
+#            6 = IO_REQUEST {id, offset, size, op (1 read, 2 write)}
+#            7, 8, 0x101, 0x102 = NV protect/backup/... (acked with status 0)
+#   AP->CP   1 = read data {id, offset, n, data[n]}  (n <= 2012)
+#            2 = write-chunk request {id, offset, n}
+#            3 = status {status, id} (+ u32 size after OPEN)
+#   status   0 ok, 1 bad path, 3 io error, 4 not allowed, 6 bad id, 8 EOF
+#
+# Usage (root): oriole-rfsd   (runs until killed; logs to stdout)
+import os, select, struct, subprocess, sys, time
+
+DEV = '/dev/umts_rfs0'
+MNT = '/run/oriole/modem'
+EFS = '/run/oriole/efs'
+STATE = '/var/lib/oriole-modem'
+SANDBOX = f'{STATE}/efs'
+NVRT = f'{STATE}/nv'
+NVSRC = EFS
+NVNAMES = {1: 'nv_normal.bin', 2: 'nv_user.bin', 3: 'nv_protected.bin'}
+CHUNK = 2012
+
+
+def log(*a):
+    print(time.strftime('%T'), *a, flush=True)
+
+
+def setup():
+    if not os.path.ismount(MNT) or not os.path.ismount(EFS):
+        sys.exit(f'{MNT} and {EFS} must be mounted')
+    if not os.path.isdir(SANDBOX) or not os.listdir(SANDBOX):
+        os.makedirs(SANDBOX, exist_ok=True)
+        subprocess.run(['cp', '-a', EFS + '/.', SANDBOX], check=True)
+        log('seeded', SANDBOX, 'from', EFS)
+    os.makedirs(NVRT, exist_ok=True)
+    for n in NVNAMES.values():
+        dst = os.path.join(NVRT, n)
+        src = os.path.join(NVSRC, n)
+        if not os.path.exists(dst) and os.path.exists(src):
+            with open(src, 'rb') as f, open(dst, 'wb') as g:
+                g.write(f.read())
+    log('modem image at', MNT, '| efs copy', SANDBOX, '| nv', NVRT)
+
+
+def confpack_root():
+    d = os.path.join(MNT, 'images', 'default')
+    return os.path.realpath(d)
+
+
+def map_path(fid, path):
+    """CP path -> (local path, writable)"""
+    if fid in NVNAMES:
+        return os.path.join(NVRT, NVNAMES[fid]), True
+    if path.startswith('/'):
+        for key in ('confpack', 'carrierconfig'):
+            i = path.find(key)
+            if i >= 0:
+                rel = path[i:]
+                local = os.path.realpath(os.path.join(confpack_root(), rel))
+                if not local.startswith(MNT + '/'):
+                    return None, False
+                return local, False
+        return None, False
+    rel = os.path.normpath(path).lstrip('/')
+    if rel.startswith('..'):
+        return None, False
+    return os.path.join(SANDBOX, rel), True
+
+
+class Rfs:
+    def __init__(self):
+        self.fd = os.open(DEV, os.O_RDWR)
+        self.files = {}     # id -> dict(fd, path, writable, seq, op...)
+
+    def send(self, cmd, seq, payload, lenfield=None):
+        ln = len(payload) if lenfield is None else lenfield
+        os.write(self.fd, struct.pack('<HHI', cmd, seq, ln) + payload)
+
+    def status(self, seq, st, fid, extra=b''):
+        self.send(3, seq, struct.pack('<II', st, fid) + extra, lenfield=8)
+
+    def handle(self, b):
+        if len(b) < 8:
+            log('short', b.hex(' '))
+            return
+        cmd, seq, ln = struct.unpack_from('<HHI', b)
+        p = b[8:8 + ln]
+        if cmd == 4:
+            fid = struct.unpack_from('<I', p)[0]
+            path = p[8:8 + 256].split(b'\0')[0].decode('latin-1')
+            flags = struct.unpack_from('<I', p, 0x108)[0] if len(p) >= 0x10c else 0x42
+            local, wr = map_path(fid, path)
+            mode = 'r+b' if wr else 'rb'
+            log(f'OPEN id={fid} seq={seq} flags=0x{flags:x} "{path}" -> {local}')
+            if local is None:
+                self.status(seq, 1, fid)
+                return
+            try:
+                if wr and not os.path.exists(local):
+                    if not flags & 0x40:            # O_CREAT
+                        raise FileNotFoundError(local)
+                    os.makedirs(os.path.dirname(local), exist_ok=True)
+                    open(local, 'wb').close()
+                f = open(local, mode)
+            except OSError as e:
+                log('  open failed:', e)
+                self.status(seq, 1, fid)
+                return
+            size = os.fstat(f.fileno()).st_size
+            self.files[fid] = dict(f=f, path=local, wr=wr, seq=seq)
+            self.status(seq, 0, fid, struct.pack('<I', size))
+        elif cmd == 5:
+            fid = struct.unpack_from('<I', p)[0]
+            ent = self.files.pop(fid, None)
+            log(f'CLOSE id={fid}', ent['path'] if ent else '(not open)')
+            if ent:
+                ent['f'].close()
+            self.status(seq, 0, fid)
+        elif cmd == 6:
+            fid, off, size, op = struct.unpack_from('<IiII', p)
+            ent = self.files.get(fid)
+            log(f'IO id={fid} op={"read" if op == 1 else "write" if op == 2 else op}'
+                f' offset={off} size={size}', ent['path'] if ent else '(not open)')
+            if ent is None and fid in NVNAMES:
+                # NV ids may be used without an explicit OPEN: open on demand
+                local, wr = map_path(fid, '')
+                try:
+                    ent = self.files[fid] = dict(f=open(local, 'r+b'), path=local, wr=True, seq=seq)
+                except OSError as e:
+                    log('  nv open failed:', e)
+            if ent is None:
+                self.status(seq, 6, fid)
+                return
+            ent['seq'] = seq
+            if off != -1:
+                ent['f'].seek(off)
+            if op == 1:
+                ent['op'] = 'read'
+                ent['left'] = size
+                self.read_chunk(fid)
+            elif op == 2:
+                if not ent['wr']:
+                    log('  write refused (read-only source)')
+                    self.status(seq, 4, fid)
+                    return
+                ent['op'] = 'write'
+                ent['left'] = size
+                self.write_req(fid)
+            else:
+                self.status(seq, 6, fid)
+        elif cmd == 1:                      # ack for a read chunk
+            st, fid = struct.unpack_from('<II', p)
+            ent = self.files.get(fid)
+            if ent is None or ent.get('op') != 'read':
+                self.status(seq, 6, fid)
+                return
+            if st != 0:
+                log(f'  read ack status {st} id={fid}')
+                ent['op'] = None
+                return
+            if ent['left'] > 0:
+                self.read_chunk(fid)
+            else:
+                ent['op'] = None
+                self.status(ent['seq'], 0, fid)
+        elif cmd == 2:                      # write chunk data
+            st, fid, n = struct.unpack_from('<III', p)
+            ent = self.files.get(fid)
+            if ent is None or ent.get('op') != 'write':
+                self.status(seq, 6, fid)
+                return
+            if st != 0:
+                log(f'  write chunk status {st} id={fid}')
+                ent['op'] = None
+                return
+            ent['f'].write(p[12:12 + n])
+            ent['left'] -= n
+            if ent['left'] > 0:
+                self.write_req(fid)
+            else:
+                ent['f'].flush()
+                ent['op'] = None
+                log(f'  write done id={fid} -> {ent["path"]}')
+                self.status(ent['seq'], 0, fid)
+        elif cmd == 3:
+            st, fid = struct.unpack_from('<II', p) if len(p) >= 8 else (-1, -1)
+            log(f'STATUS from CP status={st} id={fid}')
+        elif cmd in (7, 8, 0x101, 0x102):
+            fid = struct.unpack_from('<I', p)[0] if len(p) >= 4 else 0
+            log(f'NV control cmd=0x{cmd:x} id={fid} {p[:24].hex(" ")} -> ok')
+            self.status(seq, 0, fid)
+        else:
+            log(f'unknown cmd={cmd} seq={seq} len={ln}', p[:32].hex(' '))
+
+    def read_chunk(self, fid):
+        ent = self.files[fid]
+        off = ent['f'].tell()
+        data = ent['f'].read(min(ent['left'], CHUNK))
+        if not data:
+            ent['op'] = None
+            self.status(ent['seq'], 8, fid)      # EOF
+            return
+        ent['left'] -= len(data)
+        self.send(1, ent['seq'], struct.pack('<III', fid, off, len(data)) + data)
+
+    def write_req(self, fid):
+        ent = self.files[fid]
+        self.send(2, ent['seq'], struct.pack('<III', fid, ent['f'].tell(), min(ent['left'], CHUNK)))
+
+    def run(self):
+        log('serving', DEV)
+        while True:
+            if select.select([self.fd], [], [], 1.0)[0]:
+                try:
+                    b = os.read(self.fd, 0x840 + 64)
+                except OSError as e:
+                    log('read error', e)
+                    time.sleep(1)
+                    continue
+                try:
+                    self.handle(b)
+                except Exception as e:
+                    log('handler error', repr(e), b[:32].hex(' '))
+
+
+if __name__ == '__main__':
+    setup()
+    Rfs().run()

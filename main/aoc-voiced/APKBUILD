@@ -1,0 +1,40 @@
+# Maintainer: Noswad <64293615+TheNoswad@users.noreply.github.com>
+pkgname=aoc-voiced
+pkgver=0.1
+pkgrel=1
+pkgdesc="Voice call PCMs for the Google AoC sound card during ModemManager calls"
+url="https://postmarketos.org"
+arch="aarch64"
+license="GPL-3.0-or-later"
+makedepends="alsa-lib-dev glib-dev"
+subpackages="$pkgname-doc $pkgname-systemd"
+source="
+	aoc-voiced.c
+	aoc-voiced.service
+	README.md
+	"
+builddir="$srcdir"
+options="!check" # no test suite
+
+build() {
+	${CC:-cc} $CFLAGS -Wall -Wextra -Wno-unused-parameter \
+		-o aoc-voiced aoc-voiced.c \
+		$(pkg-config --cflags --libs gio-2.0 gio-unix-2.0 alsa) $LDFLAGS
+}
+
+package() {
+	install -Dm755 aoc-voiced -t "$pkgdir"/usr/bin/
+	install -Dm644 README.md -t "$pkgdir"/usr/share/doc/$pkgname/
+	install -Dm644 aoc-voiced.service -t "$pkgdir"/usr/lib/systemd/system/
+}
+
+systemd() {
+	pkgdesc="$pkgdesc (systemd unit)"
+	install_if="$pkgname=$pkgver-r$pkgrel systemd"
+	amove usr/lib/systemd/system
+}
+sha512sums="
+8a54f061137743e97df54055166a51b462c46337d3d195e22674aa3fd9819d3bcd4ef8eabfc8951ced57780ebac1df92dee2d51681dacab02ef65a67fb19ed6d  aoc-voiced.c
+78e79c4a2a99ec57a443e4205432f6145c3e1904ba4630e62029c363f2eda19511164b8eec3ebf826b60006e34d612f03cef0d64697a98d21911146da90a3440  aoc-voiced.service
+f314f81cfcaea423c04c167730c7a48a7e4591b96e1da37e1c3e937323117e7a8371df21620e1d8aab9f4031355e01c6bc57c927918e8c5e32a87d29a8907235  README.md
+"

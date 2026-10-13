@@ -1,0 +1,480 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH 1/2] core: SIT port type on the cpif subsystem (local)
+
+Adds MM_PORT_TYPE_SIT / MM_MODEM_PORT_TYPE_SIT and MM_PORT_SUBSYS_CPIF for
+the SIT control channel of Samsung Shannon modems (Google Pixel cpif):
+ports tagged ID_MM_PORT_TYPE_SIT are never probed and are supported by
+plugins with MM_PLUGIN_ALLOWED_SIT, which also skip the driver filter
+(cpif nodes and rmnet are driverless virtual devices); the SIT port is the
+primary port when there is no AT/QMI/MBIM port. Local, not upstreamed.
+---
+diff --git a/include/ModemManager-enums.h b/include/ModemManager-enums.h
+index e86b7752..cd366714 100644
+--- a/include/ModemManager-enums.h
++++ b/include/ModemManager-enums.h
+@@ -670,6 +670,7 @@ typedef enum { /*< underscore_name=mm_modem_band >*/
+  * @MM_MODEM_PORT_TYPE_AUDIO: Audio port. Since 1.12.
+  * @MM_MODEM_PORT_TYPE_IGNORED: Ignored port. Since 1.16.
+  * @MM_MODEM_PORT_TYPE_XMMRPC: Control protocol for Intel XMM modems. Since 1.24.
++ * @MM_MODEM_PORT_TYPE_SIT: SIT control protocol for Samsung Shannon modems (local).
+  *
+  * Type of modem port.
+  *
+@@ -686,6 +687,7 @@ typedef enum { /*< underscore_name=mm_modem_port_type >*/
+     MM_MODEM_PORT_TYPE_AUDIO   = 8,
+     MM_MODEM_PORT_TYPE_IGNORED = 9,
+     MM_MODEM_PORT_TYPE_XMMRPC  = 10,
++    MM_MODEM_PORT_TYPE_SIT     = 11,
+ } MMModemPortType;
+ 
+ /**
+diff --git a/include/ModemManager-tags.h b/include/ModemManager-tags.h
+index 6f74cf55..94be9b6f 100644
+--- a/include/ModemManager-tags.h
++++ b/include/ModemManager-tags.h
+@@ -240,6 +240,17 @@
+  */
+ #define ID_MM_PORT_TYPE_XMMRPC "ID_MM_PORT_TYPE_XMMRPC"
+ 
++/**
++ * ID_MM_PORT_TYPE_SIT:
++ *
++ * This is a port-specific tag applied to cpif character devices that we know
++ * in advance are SIT control ports of Samsung Shannon modems (local).
++ *
++ * This tag will also prevent other types of probing (e.g. AT, QMI) on the
++ * port.
++ */
++#define ID_MM_PORT_TYPE_SIT "ID_MM_PORT_TYPE_SIT"
++
+ /**
+  * ID_MM_TTY_BAUDRATE:
+  *
+diff --git a/src/mm-base-manager.c b/src/mm-base-manager.c
+index 7ba2cdec..65e3f653 100644
+--- a/src/mm-base-manager.c
++++ b/src/mm-base-manager.c
+@@ -235,6 +235,7 @@ modem_setup (FindDeviceSupportContext *ctx)
+             case MM_MODEM_PORT_TYPE_QMI:
+             case MM_MODEM_PORT_TYPE_MBIM:
+             case MM_MODEM_PORT_TYPE_XMMRPC:
++            case MM_MODEM_PORT_TYPE_SIT:
+                 g_ptr_array_add (aux, g_strdup (port_infos[i].name));
+                 break;
+             case MM_MODEM_PORT_TYPE_UNKNOWN:
+diff --git a/src/mm-base-modem.c b/src/mm-base-modem.c
+index 2ff45d4d..9cc43608 100644
+--- a/src/mm-base-modem.c
++++ b/src/mm-base-modem.c
+@@ -117,6 +117,7 @@ struct _MMBaseModemPrivate {
+ 
+     GHashTable *ports;
+     MMPortSerialAt *primary;
++    MMPort *sit;
+     MMPortSerialAt *secondary;
+     MMPortSerialQcdm *qcdm;
+ 
+@@ -352,6 +353,21 @@ base_modem_create_wwan_port (MMBaseModem *self,
+     return NULL;
+ }
+ 
++static MMPort *
++base_modem_create_cpif_port (MMBaseModem *self,
++                             const gchar *name,
++                             MMPortType   ptype)
++{
++    if (ptype == MM_PORT_TYPE_SIT)
++        return MM_PORT (g_object_new (MM_TYPE_PORT,
++                                      MM_PORT_DEVICE, name,
++                                      MM_PORT_SUBSYS, MM_PORT_SUBSYS_CPIF,
++                                      MM_PORT_GROUP, MM_PORT_GROUP_USED,
++                                      MM_PORT_TYPE, MM_PORT_TYPE_SIT,
++                                      NULL));
++    return NULL;
++}
++
+ static MMPort *
+ base_modem_create_virtual_port (MMBaseModem *self,
+                                 const gchar *name)
+@@ -416,6 +432,8 @@ base_modem_internal_grab_port (MMBaseModem         *self,
+         port = base_modem_create_virtual_port (self, name);
+     else if (g_str_equal (subsys, "wwan"))
+         port = MM_BASE_MODEM_GET_CLASS (self)->create_wwan_port (self, name, ptype);
++    else if (g_str_equal (subsys, "cpif"))
++        port = base_modem_create_cpif_port (self, name, ptype);
+ 
+     if (!port) {
+         g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
+@@ -1123,6 +1141,14 @@ mm_base_modem_get_port_primary (MMBaseModem *self)
+     return (self->priv->primary ? g_object_ref (self->priv->primary) : NULL);
+ }
+ 
++MMPort *
++mm_base_modem_peek_port_sit (MMBaseModem *self)
++{
++    g_return_val_if_fail (MM_IS_BASE_MODEM (self), NULL);
++
++    return self->priv->sit;
++}
++
+ MMPortSerialAt *
+ mm_base_modem_peek_port_primary (MMBaseModem *self)
+ {
+@@ -1378,6 +1404,9 @@ parse_port_infos (GHashTable *ports,
+         case MM_PORT_TYPE_XMMRPC:
+             port_info.type = MM_MODEM_PORT_TYPE_XMMRPC;
+             break;
++        case MM_PORT_TYPE_SIT:
++            port_info.type = MM_MODEM_PORT_TYPE_SIT;
++            break;
+         case MM_PORT_TYPE_IGNORED:
+             port_info.type = MM_MODEM_PORT_TYPE_IGNORED;
+             break;
+@@ -1522,6 +1551,7 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+     MMPortSerial *audio = NULL;
+     MMPortSerialAt *data_at_primary = NULL;
+     MMPort *xmmrpc = NULL;
++    MMPort *sit = NULL;
+     GList *l;
+     /* These lists don't keep full references, so they should be
+      * g_list_free()-ed on error exits */
+@@ -1626,6 +1656,11 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+             if (!xmmrpc)
+                 xmmrpc = MM_PORT (candidate);
+             break;
++        case MM_PORT_TYPE_SIT:
++            g_assert (MM_IS_PORT (candidate));
++            if (!sit)
++                sit = MM_PORT (candidate);
++            break;
+ 
+ #if defined WITH_QMI
+         case MM_PORT_TYPE_QMI:
+@@ -1667,6 +1702,9 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+         else {
+             gboolean allow_modem_without_at_port = FALSE;
+ 
++            if (sit)
++                allow_modem_without_at_port = TRUE;
++
+ #if defined WITH_QMI
+             if (qmi)
+                 allow_modem_without_at_port = TRUE;
+@@ -1755,6 +1793,7 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+     log_port (self, MM_PORT (gps),             "gps (nmea)");
+     log_port (self, MM_PORT (audio),           "audio");
+     log_port (self, MM_PORT (xmmrpc),          "xmmrpc");
++    log_port (self, MM_PORT (sit),             "sit");
+ #if defined WITH_QMI
+     for (l = qmi; l; l = g_list_next (l))
+         log_port (self, MM_PORT (l->data),     "qmi");
+@@ -1767,6 +1806,7 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+     /* We keep new refs to the objects here */
+ 
+     self->priv->primary = (primary ? g_object_ref (primary) : NULL);
++    self->priv->sit = (sit ? g_object_ref (sit) : NULL);
+     self->priv->secondary = (secondary ? g_object_ref (secondary) : NULL);
+     self->priv->qcdm = (qcdm ? g_object_ref (qcdm) : NULL);
+     self->priv->gps_control = (gps_control ? g_object_ref (gps_control) : NULL);
+@@ -2653,6 +2693,7 @@ dispose (GObject *object)
+     clear_invalid_from_idle (self);
+ 
+     g_clear_object (&self->priv->primary);
++    g_clear_object (&self->priv->sit);
+     g_clear_object (&self->priv->secondary);
+     g_list_free_full (g_steal_pointer (&self->priv->data), g_object_unref);
+     g_clear_object (&self->priv->qcdm);
+diff --git a/src/mm-base-modem.h b/src/mm-base-modem.h
+index e0aecbb7..a46af405 100644
+--- a/src/mm-base-modem.h
++++ b/src/mm-base-modem.h
+@@ -172,6 +172,7 @@ gboolean  mm_base_modem_organize_ports (MMBaseModem *self,
+                                         GError **error);
+ 
+ MMPortSerialAt   *mm_base_modem_peek_port_primary      (MMBaseModem *self);
++MMPort           *mm_base_modem_peek_port_sit          (MMBaseModem *self);
+ MMPortSerialAt   *mm_base_modem_peek_port_secondary    (MMBaseModem *self);
+ MMPortSerialQcdm *mm_base_modem_peek_port_qcdm         (MMBaseModem *self);
+ MMPortSerialAt   *mm_base_modem_peek_port_gps_control  (MMBaseModem *self);
+diff --git a/src/mm-iface-modem-firmware.c b/src/mm-iface-modem-firmware.c
+index f13e4a4c..60a66ad9 100644
+--- a/src/mm-iface-modem-firmware.c
++++ b/src/mm-iface-modem-firmware.c
+@@ -415,6 +415,8 @@ mm_iface_firmware_build_generic_device_ids (MMIfaceModemFirmware  *self,
+ #endif
+     if (!primary)
+         primary = MM_PORT (mm_base_modem_peek_port_primary (MM_BASE_MODEM (self)));
++    if (!primary)
++        primary = mm_base_modem_peek_port_sit (MM_BASE_MODEM (self));
+ 
+     if (!primary) {
+         g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+diff --git a/src/mm-iface-modem.c b/src/mm-iface-modem.c
+index bb81cfdd..d925dc75 100644
+--- a/src/mm-iface-modem.c
++++ b/src/mm-iface-modem.c
+@@ -4367,6 +4367,7 @@ fcc_unlock (GTask *task)
+         case MM_MODEM_PORT_TYPE_QMI:
+         case MM_MODEM_PORT_TYPE_MBIM:
+         case MM_MODEM_PORT_TYPE_XMMRPC:
++        case MM_MODEM_PORT_TYPE_SIT:
+             g_ptr_array_add (aux, g_strdup (port_infos[i].name));
+             break;
+         case MM_MODEM_PORT_TYPE_UNKNOWN:
+@@ -5755,6 +5756,8 @@ interface_initialization_step (GTask *task)
+ #endif
+             if (!primary)
+                 primary = MM_PORT (mm_base_modem_peek_port_primary (MM_BASE_MODEM (self)));
++            if (!primary)
++                primary = mm_base_modem_peek_port_sit (MM_BASE_MODEM (self));
+ 
+             if (!primary) {
+                 g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+diff --git a/src/mm-plugin.c b/src/mm-plugin.c
+index a22302a4..a195d20a 100644
+--- a/src/mm-plugin.c
++++ b/src/mm-plugin.c
+@@ -95,6 +95,7 @@ struct _MMPluginPrivate {
+     gboolean qmi;
+     gboolean mbim;
+     gboolean xmmrpc;
++    gboolean sit;
+     gboolean icera_probe;
+     gboolean xmm_probe;
+     MMPortProbeAtCommand *custom_at_probe;
+@@ -130,6 +131,7 @@ enum {
+     PROP_ALLOWED_QMI,
+     PROP_ALLOWED_MBIM,
+     PROP_ALLOWED_XMMRPC,
++    PROP_ALLOWED_SIT,
+     PROP_ICERA_PROBE,
+     PROP_ALLOWED_ICERA,
+     PROP_FORBIDDEN_ICERA,
+@@ -294,7 +296,10 @@ apply_pre_probing_filters (MMPlugin       *self,
+                    virtual_drivers :
+                    mm_device_get_drivers (device));
+ 
+-        /* If error retrieving driver: unsupported */
++        /* If error retrieving driver: unsupported. SIT (cpif) modems are
++         * driverless virtual devices, so plugins allowing SIT skip this. */
++        if (!drivers && self->priv->sit)
++            goto drivers_done;
+         if (!drivers) {
+             mm_obj_dbg (self, "port %s filtered as couldn't retrieve drivers", mm_kernel_device_get_name (port));
+             return TRUE;
+@@ -361,6 +366,7 @@ apply_pre_probing_filters (MMPlugin       *self,
+             }
+         }
+     }
++drivers_done:
+ 
+     vendor = mm_device_get_vendor (device);
+     product = mm_device_get_product (device);
+@@ -811,6 +817,15 @@ mm_plugin_supports_port (MMPlugin            *self,
+         return;
+     }
+ 
++    /* SIT ports are never probed: the udev tag says what they are */
++    if (mm_port_probe_is_sit (probe)) {
++        g_task_return_int (task, (self->priv->sit ?
++                                  MM_PLUGIN_SUPPORTS_PORT_SUPPORTED :
++                                  MM_PLUGIN_SUPPORTS_PORT_UNSUPPORTED));
++        g_object_unref (task);
++        return;
++    }
++
+     /* Build mask of flags based on subsystem */
+     subsystem_expected_flags = mm_string_uint_map_lookup (subsys_flags_map,
+                                                           G_N_ELEMENTS (subsys_flags_map),
+@@ -1262,6 +1277,10 @@ set_property (GObject *object,
+         /* Construct only */
+         self->priv->xmmrpc = g_value_get_boolean (value);
+         break;
++    case PROP_ALLOWED_SIT:
++        /* Construct only */
++        self->priv->sit = g_value_get_boolean (value);
++        break;
+     case PROP_ICERA_PROBE:
+         /* Construct only */
+         self->priv->icera_probe = g_value_get_boolean (value);
+@@ -1378,6 +1397,9 @@ get_property (GObject *object,
+     case PROP_ALLOWED_XMMRPC:
+         g_value_set_boolean (value, self->priv->xmmrpc);
+         break;
++    case PROP_ALLOWED_SIT:
++        g_value_set_boolean (value, self->priv->sit);
++        break;
+     case PROP_ALLOWED_UDEV_TAGS:
+         g_value_set_boxed (value, self->priv->udev_tags);
+         break;
+@@ -1637,6 +1659,14 @@ mm_plugin_class_init (MMPluginClass *klass)
+                                FALSE,
+                                G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
+ 
++    g_object_class_install_property
++        (object_class, PROP_ALLOWED_SIT,
++         g_param_spec_boolean (MM_PLUGIN_ALLOWED_SIT,
++                               "Allowed SIT",
++                               "Whether SIT ports are allowed in this plugin.",
++                               FALSE,
++                               G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
++
+     g_object_class_install_property
+         (object_class, PROP_ICERA_PROBE,
+          g_param_spec_boolean (MM_PLUGIN_ICERA_PROBE,
+diff --git a/src/mm-plugin.h b/src/mm-plugin.h
+index 73bb8785..a2045504 100644
+--- a/src/mm-plugin.h
++++ b/src/mm-plugin.h
+@@ -61,6 +61,7 @@
+ #define MM_PLUGIN_ALLOWED_QMI                  "allowed-qmi"
+ #define MM_PLUGIN_ALLOWED_MBIM                 "allowed-mbim"
+ #define MM_PLUGIN_ALLOWED_XMMRPC               "allowed-xmmrpc"
++#define MM_PLUGIN_ALLOWED_SIT                  "allowed-sit"
+ #define MM_PLUGIN_ICERA_PROBE                  "icera-probe"
+ #define MM_PLUGIN_ALLOWED_ICERA                "allowed-icera"
+ #define MM_PLUGIN_FORBIDDEN_ICERA              "forbidden-icera"
+diff --git a/src/mm-port-probe.c b/src/mm-port-probe.c
+index b3bac90c..1a0a53a0 100644
+--- a/src/mm-port-probe.c
++++ b/src/mm-port-probe.c
+@@ -92,6 +92,7 @@ struct _MMPortProbePrivate {
+     gboolean is_gps;
+     gboolean is_audio;
+     gboolean is_xmmrpc;
++    gboolean is_sit;
+     gboolean maybe_at;
+     gboolean maybe_qcdm;
+     gboolean maybe_qmi;
+@@ -116,6 +117,7 @@ static const MMStringUintMap port_subsys_map[] = {
+     { "usbmisc", MM_PORT_SUBSYS_USBMISC },
+     { "rpmsg",   MM_PORT_SUBSYS_RPMSG },
+     { "wwan",    MM_PORT_SUBSYS_WWAN },
++    { "cpif",    MM_PORT_SUBSYS_CPIF },
+ };
+ 
+ /*****************************************************************************/
+@@ -1819,6 +1821,15 @@ mm_port_probe_run (MMPortProbe                *self,
+         mm_port_probe_set_result_mbim (self, FALSE);
+     }
+ 
++    /* If this is a port flagged as a SIT port, don't do any other probing */
++    if (self->priv->is_sit) {
++        mm_obj_dbg (self, "SIT port detected");
++        mm_port_probe_set_result_at   (self, FALSE);
++        mm_port_probe_set_result_qcdm (self, FALSE);
++        mm_port_probe_set_result_qmi  (self, FALSE);
++        mm_port_probe_set_result_mbim (self, FALSE);
++    }
++
+     /* If this is a port flagged as being an AT port, don't do any other probing */
+     if (self->priv->maybe_at) {
+         mm_obj_dbg (self, "no QCDM/QMI/MBIM probing in possible AT port");
+@@ -1987,6 +1998,30 @@ mm_port_probe_is_xmmrpc (MMPortProbe *self)
+     return self->priv->is_xmmrpc;
+ }
+ 
++gboolean
++mm_port_probe_is_sit (MMPortProbe *self)
++{
++    g_return_val_if_fail (MM_IS_PORT_PROBE (self), FALSE);
++
++    return self->priv->is_sit;
++}
++
++gboolean
++mm_port_probe_list_has_sit_port (GList *list)
++{
++    GList *l;
++
++    for (l = list; l; l = g_list_next (l)) {
++        MMPortProbe *probe = MM_PORT_PROBE (l->data);
++
++        if (!probe->priv->is_ignored &&
++            mm_port_probe_is_sit (probe))
++            return TRUE;
++    }
++
++    return FALSE;
++}
++
+ gboolean
+ mm_port_probe_list_has_xmmrpc_port (GList *list)
+ {
+@@ -2055,6 +2090,9 @@ mm_port_probe_get_port_type (MMPortProbe *self)
+     if (self->priv->is_xmmrpc)
+         return MM_PORT_TYPE_XMMRPC;
+ 
++    if (self->priv->is_sit)
++        return MM_PORT_TYPE_SIT;
++
+     return MM_PORT_TYPE_UNKNOWN;
+ }
+ 
+@@ -2201,6 +2239,7 @@ initialize_port_type_hints (MMPortProbe *self)
+     ADD_HINT_FROM_UDEV_TAG (ID_MM_PORT_TYPE_GPS,           is_gps);
+     ADD_HINT_FROM_UDEV_TAG (ID_MM_PORT_TYPE_AUDIO,         is_audio);
+     ADD_HINT_FROM_UDEV_TAG (ID_MM_PORT_TYPE_XMMRPC,        is_xmmrpc);
++    ADD_HINT_FROM_UDEV_TAG (ID_MM_PORT_TYPE_SIT,           is_sit);
+     ADD_HINT_FROM_UDEV_TAG (ID_MM_PORT_TYPE_AT_PRIMARY,    maybe_at);
+     ADD_HINT_FROM_UDEV_TAG (ID_MM_PORT_TYPE_AT_SECONDARY,  maybe_at);
+     ADD_HINT_FROM_UDEV_TAG (ID_MM_PORT_TYPE_AT_PPP,        maybe_at);
+@@ -2305,12 +2344,13 @@ initialize_port_type_hints (MMPortProbe *self)
+ 
+ #undef PROCESS_AUTO_HINTS
+ 
+-    mm_obj_dbg (self, "port type hints loaded: AT %s, QMI %s, MBIM %s, QCDM %s, XMMRPC %s, AUDIO %s, GPS %s",
++    mm_obj_dbg (self, "port type hints loaded: AT %s, QMI %s, MBIM %s, QCDM %s, XMMRPC %s, SIT %s, AUDIO %s, GPS %s",
+                 self->priv->maybe_at ? "yes" : "no",
+                 self->priv->maybe_qmi ? "yes" : "no",
+                 self->priv->maybe_mbim ? "yes" : "no",
+                 self->priv->maybe_qcdm ? "yes" : "no",
+                 self->priv->is_xmmrpc ? "yes" : "no",
++                self->priv->is_sit ? "yes" : "no",
+                 self->priv->is_audio ? "yes" : "no",
+                 self->priv->is_gps ? "yes" : "no");
+ 
+diff --git a/src/mm-port-probe.h b/src/mm-port-probe.h
+index 3833d50c..bc6fda1b 100644
+--- a/src/mm-port-probe.h
++++ b/src/mm-port-probe.h
+@@ -147,6 +147,7 @@ gboolean      mm_port_probe_is_qcdm          (MMPortProbe *self);
+ gboolean      mm_port_probe_is_qmi           (MMPortProbe *self);
+ gboolean      mm_port_probe_is_mbim          (MMPortProbe *self);
+ gboolean      mm_port_probe_is_xmmrpc        (MMPortProbe *self);
++gboolean      mm_port_probe_is_sit           (MMPortProbe *self);
+ const gchar  *mm_port_probe_get_vendor       (MMPortProbe *self);
+ const gchar  *mm_port_probe_get_product      (MMPortProbe *self);
+ gboolean      mm_port_probe_is_icera         (MMPortProbe *self);
+@@ -157,6 +158,7 @@ gboolean mm_port_probe_list_has_at_port     (GList *list);
+ gboolean mm_port_probe_list_has_qmi_port    (GList *list);
+ gboolean mm_port_probe_list_has_mbim_port   (GList *list);
+ gboolean mm_port_probe_list_has_xmmrpc_port (GList *list);
++gboolean mm_port_probe_list_has_sit_port    (GList *list);
+ gboolean mm_port_probe_list_is_icera        (GList *list);
+ gboolean mm_port_probe_list_is_xmm          (GList *list);
+ 
+diff --git a/src/mm-port.h b/src/mm-port.h
+index 1dd054a5..8f3d531b 100644
+--- a/src/mm-port.h
++++ b/src/mm-port.h
+@@ -31,7 +31,8 @@ typedef enum { /*< underscore_name=mm_port_subsys >*/
+     MM_PORT_SUBSYS_QRTR,
+     MM_PORT_SUBSYS_RPMSG,
+     MM_PORT_SUBSYS_WWAN,
+-    MM_PORT_SUBSYS_LAST = MM_PORT_SUBSYS_WWAN /*< skip >*/
++    MM_PORT_SUBSYS_CPIF,
++    MM_PORT_SUBSYS_LAST = MM_PORT_SUBSYS_CPIF /*< skip >*/
+ } MMPortSubsys;
+ 
+ typedef enum { /*< underscore_name=mm_port_group >*/
+@@ -52,7 +53,8 @@ typedef enum { /*< underscore_name=mm_port_type >*/
+     MM_PORT_TYPE_MBIM,
+     MM_PORT_TYPE_XMMRPC,
+     MM_PORT_TYPE_AUDIO,
+-    MM_PORT_TYPE_LAST = MM_PORT_TYPE_AUDIO /*< skip >*/
++    MM_PORT_TYPE_SIT,
++    MM_PORT_TYPE_LAST = MM_PORT_TYPE_SIT /*< skip >*/
+ } MMPortType;
+ 
+ #define MM_TYPE_PORT            (mm_port_get_type ())

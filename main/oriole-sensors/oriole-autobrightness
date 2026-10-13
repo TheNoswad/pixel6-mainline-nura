@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Auto-brightness for Plasma on the Pixel 6: reads ambient light from
+# net.hadess.SensorProxy (oriole-sensorproxy, or iio-sensor-proxy anywhere
+# else) and sets the raw sysfs backlight. Plasma's PowerDevil has no
+# ambient-light support, so this fills that gap. Runs as root.
+#
+# brightness = curve(lux) * 2^offset. Moving the brightness slider changes
+# offset (kept in STATE), so the curve follows the user's preference. The
+# light claim is dropped while the display is off.
+import math, os, sys, time
+import gi
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib
+try:
+    gi.require_version("GLibUnix", "2.0")
+    from gi.repository import GLibUnix
+except (ValueError, ImportError):
+    GLibUnix = None
+fd_add = GLibUnix.fd_add_full if GLibUnix else GLib.unix_fd_add_full
+signal_add = GLibUnix.signal_add if GLibUnix else GLib.unix_signal_add
+
+DPMS = "/sys/class/drm/card1-DSI-1/dpms"
+CONF = "/etc/oriole-autobrightness.conf"
+STATE = "/var/lib/oriole-autobrightness/offset"
+
+cfg = {
+    # (lux, fraction of max_brightness); interpolated in log(lux)
+    "curve": "0:0.012 2:0.03 10:0.07 40:0.15 100:0.25 300:0.40 1000:0.60 3000:0.80 10000:1.0",
+    "min_raw": 8,
+    "brighten_tau": 2.0,      # s
+    "darken_tau": 6.0,        # s
+    "deadband": 0.06,         # don't move for < 6 % change
+    "ramp_ms": 400,
+    "debug": 0,
+}
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def load_conf():
+    try:
+        for line in open(CONF):
+            line = line.split("#", 1)[0].strip()
+            if "=" in line:
+                k, v = (x.strip() for x in line.split("=", 1))
+                if k in cfg:
+                    cfg[k] = type(cfg[k])(v) if not isinstance(cfg[k], str) else v
+    except FileNotFoundError:
+        pass
+    return sorted((float(a), float(b)) for a, b in (p.split(":") for p in cfg["curve"].split()))
+
+
+def curve(pts, lux):
+    x = math.log10(max(lux, 0.0) + 1.0)
+    xs = [math.log10(l + 1.0) for l, _ in pts]
+    if x <= xs[0]:
+        return pts[0][1]
+    for i in range(1, len(pts)):
+        if x <= xs[i]:
+            t = (x - xs[i - 1]) / (xs[i] - xs[i - 1])
+            return pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1])
+    return pts[-1][1]
+
+
+class Backlight:
+    def __init__(self):
+        base = "/sys/class/backlight"
+        self.dir = os.path.join(base, sorted(os.listdir(base))[0])
+        self.max = int(open(f"{self.dir}/max_brightness").read())
+
+    def get(self):
+        return int(open(f"{self.dir}/brightness").read())
+
+    def set(self, v):
+        open(f"{self.dir}/brightness", "w").write(str(int(v)))
+
+
+def display_on():
+    try:
+        return open(DPMS).read().strip() == "On"
+    except OSError:
+        return True
+
+
+def read_offset():
+    try:
+        return float(open(STATE).read())
+    except (OSError, ValueError):
+        return 0.0
+
+
+def save_offset(off):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    tmp = STATE + ".tmp"
+    open(tmp, "w").write(f"{off:.4f}\n")
+    os.replace(tmp, STATE)
+
+
+class AutoBrightness:
+    def __init__(self):
+        self.pts = load_conf()
+        self.bl = Backlight()
+        self.offset = read_offset()
+        self.lux = None           # smoothed ambient lux
+        self.last_t = None
+        self.written = None       # last value we wrote
+        self.proxy = None
+        self.claimed = False
+        self.level = None         # last LightLevel from the proxy
+
+    # -- sensor proxy --
+    def proxy_appeared(self, conn, name, owner):
+        self.proxy = Gio.DBusProxy.new_sync(
+            conn, Gio.DBusProxyFlags.NONE, None, "net.hadess.SensorProxy",
+            "/net/hadess/SensorProxy", "net.hadess.SensorProxy", None)
+        self.proxy.connect("g-properties-changed", self.props_changed)
+        self.claimed = False
+        log(f"sensor proxy {owner} appeared")
+        self.sync_claim()
+
+    def proxy_vanished(self, conn, name):
+        if self.proxy:
+            log("sensor proxy went away")
+        self.proxy, self.claimed = None, False
+
+    def sync_claim(self):
+        if self.proxy is None:
+            return
+        has = self.proxy.get_cached_property("HasAmbientLight")
+        want = display_on() and has is not None and has.unpack()
+        if want == self.claimed:
+            return
+        try:
+            self.proxy.call_sync("ClaimLight" if want else "ReleaseLight", None,
+                                 Gio.DBusCallFlags.NONE, 2000, None)
+            self.claimed = want
+            self.level = None
+            if want:
+                self.lux, self.last_t = None, None
+                self.written = self.bl.get()   # whatever is there now is not a user choice
+        except GLib.Error as e:
+            log(f"claim/release failed: {e.message}")
+
+    def props_changed(self, proxy, changed, invalidated):
+        changed = changed.unpack()
+        if "HasAmbientLight" in changed:
+            self.sync_claim()
+        if "LightLevel" in changed and self.claimed:
+            self.level = changed["LightLevel"]
+
+    def tick(self):
+        # The proxy only signals real changes; step every second so the
+        # smoothing keeps converging while the light is steady.
+        self.sync_claim()
+        if self.claimed and self.level is not None:
+            self.step(self.level)
+        return True
+
+    # -- brightness --
+    def smooth(self, lux):
+        now = time.monotonic()
+        if self.lux is None:
+            self.lux, self.last_t = lux, now
+            return self.lux
+        dt = now - self.last_t
+        self.last_t = now
+        a, b = math.log10(self.lux + 1), math.log10(lux + 1)
+        tau = cfg["brighten_tau"] if b > a else cfg["darken_tau"]
+        a += (b - a) * (1 - math.exp(-dt / tau))
+        self.lux = 10 ** a - 1
+        return self.lux
+
+    def target(self, lux):
+        frac = curve(self.pts, lux) * 2 ** self.offset
+        return int(min(self.bl.max, max(cfg["min_raw"], round(frac * self.bl.max))))
+
+    def user_changed(self, cur, lux):
+        frac = max(cur, 1) / self.bl.max
+        self.offset = max(-4.0, min(4.0, math.log2(frac / curve(self.pts, lux))))
+        save_offset(self.offset)
+        log(f"brightness set to {cur} at {lux:.1f} lux -> offset {self.offset:+.2f}")
+
+    def ramp(self, cur, tgt):
+        steps = max(1, cfg["ramp_ms"] // 40)
+        for i in range(1, steps + 1):
+            v = round(cur + (tgt - cur) * i / steps)
+            self.bl.set(v)
+            self.written = v
+            time.sleep(cfg["ramp_ms"] / 1000 / steps)
+
+    def step(self, lux):
+        amb = self.smooth(lux)
+        cur = self.bl.get()
+        if self.written is not None and abs(cur - self.written) > 2:
+            self.user_changed(cur, amb)       # slider moved (or someone else wrote)
+            self.written = cur
+            return
+        tgt = self.target(amb)
+        if cfg["debug"]:
+            log(f"lux {lux:8.2f} smoothed {amb:8.2f} cur {cur} tgt {tgt}")
+        if abs(tgt - cur) > max(2, cfg["deadband"] * cur):
+            self.ramp(cur, tgt)
+
+    def run(self):
+        loop = GLib.MainLoop()
+        Gio.bus_watch_name(Gio.BusType.SYSTEM, "net.hadess.SensorProxy",
+                           Gio.BusNameWatcherFlags.NONE, self.proxy_appeared,
+                           self.proxy_vanished)
+        GLib.timeout_add_seconds(1, self.tick)
+        signal_add(GLib.PRIORITY_DEFAULT, 15, loop.quit)
+        signal_add(GLib.PRIORITY_DEFAULT, 2, loop.quit)
+        loop.run()
+        if self.proxy and self.claimed:
+            try:
+                self.proxy.call_sync("ReleaseLight", None, Gio.DBusCallFlags.NONE, 1000, None)
+            except GLib.Error:
+                pass
+
+
+if __name__ == "__main__":
+    AutoBrightness().run()

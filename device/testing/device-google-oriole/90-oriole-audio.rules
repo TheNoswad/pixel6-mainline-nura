@@ -1,0 +1,9 @@
+# Local (oriole): keep PulseAudio's udev autodetection off the AoC card. It
+# opens hw:0,5 with mmap and timer scheduling, and the AoC endpoint then
+# plays loud garbage regardless of the volume. oriole-speaker.pa loads the
+# card with mmap=no tsched=no instead. The profile set (also used by
+# PipeWire's ACP) exposes only the speaker endpoint (EP6, hw:0,5).
+SUBSYSTEM=="sound", KERNEL=="card*", ATTR{id}=="googleaocsndcar", \
+	ENV{PULSE_IGNORE}="1", \
+	ENV{PULSE_PROFILE_SET}="google-oriole-aoc.conf", \
+	ENV{ACP_PROFILE_SET}="google-oriole-aoc.conf"

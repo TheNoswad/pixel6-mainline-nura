@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Bring up the Pixel 6 AoC sensor hub (USF): sensor rails on, USF channel
+# device present, sensor registry loaded. Idempotent; run as root.
+import os, subprocess, sys, time
+sys.path.insert(0, "/usr/lib/oriole-sensors")
+import oriole_usf as usf
+
+# registry scripts: the factory image's (firmware-google-oriole-sensors),
+# then this phone's factory calibration from its persist partition
+ORDER = "/usr/share/oriole-sensors/reg-order"
+REG_DIRS = ("/usr/share/firmware-google-oriole/sensors",
+            "/run/oriole/persist/sensors/registry")
+AOC = "/sys/devices/platform/soc@0/19000000.aoc"
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def rail_enabled(name):
+    for r in os.listdir("/sys/class/regulator"):
+        d = f"/sys/class/regulator/{r}"
+        try:
+            if open(f"{d}/name").read().strip() == name:
+                return open(f"{d}/state").read().strip() == "enabled"
+        except OSError:
+            pass
+    return False
+
+
+def module_loaded(name):
+    return os.path.isdir(f"/sys/module/{name}")
+
+
+def ensure_rails():
+    # oriole-usf starts before aoc_core has probed (~1 s later at boot);
+    # aoc_core enables the rails itself at probe, so wait for that.
+    for _ in range(300):
+        if rail_enabled("vdd_sensors"):
+            return
+        if os.path.exists(f"{AOC}/sensor_power_enable") and module_loaded("aoc_core"):
+            try:
+                open(f"{AOC}/sensor_power_enable", "w").write("1")
+            except OSError as e:
+                log(f"sensor_power_enable: {e} (retrying)")
+            if rail_enabled("vdd_sensors"):
+                log("sensor rails enabled by aoc_core")
+                return
+        time.sleep(0.1)
+    raise SystemExit("vdd_sensors still off after 30 s")
+
+
+def ensure_channel():
+    if not os.path.exists(usf.DEV):
+        subprocess.run(["modprobe", "aoc_channel_dev"], check=True)
+        for _ in range(300):
+            if os.path.exists(usf.DEV):
+                break
+            time.sleep(0.1)
+    if not os.path.exists(usf.DEV):
+        raise SystemExit(f"{usf.DEV} did not appear")
+
+
+def ensure_registry():
+    u = usf.Usf()
+    try:
+        if u.sensor_list():
+            log("registry already loaded")
+            return
+        scripts = []
+        for name in (l.strip() for l in open(ORDER)):
+            if not name or name.startswith("#"):
+                continue
+            path = next((f"{d}/{name}" for d in REG_DIRS
+                         if os.path.exists(f"{d}/{name}")), None)
+            if path:
+                scripts.append(path)
+            else:
+                log(f"{name} not found, skipped")
+        usf.load_registry(u, scripts, log)
+        for _ in range(50):
+            ids = u.sensor_list()
+            if ids:
+                log(f"{len(ids)} sensors")
+                return
+            time.sleep(0.1)
+        raise SystemExit("registry loaded but no sensors appeared")
+    finally:
+        u.close()
+
+
+def main():
+    ensure_rails()
+    ensure_channel()
+    ensure_registry()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Pixel 6 (oriole) CS40L25A haptics (cs40l2x driver): feedbackd vibra device
+# with user access, and the factory calibration once the device is there.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT}=="1", SUBSYSTEMS=="input", ATTRS{name}=="cs40l25_input", TAG+="uaccess", ENV{FEEDBACKD_TYPE}="vibra"
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="input*", ATTR{name}=="cs40l25_input", TAG+="systemd", ENV{SYSTEMD_WANTS}+="oriole-haptics-cal.service"

@@ -1,0 +1,51 @@
+# Forked from Alpine for a local patch (Nura on the Pixel 6): toggling the
+# speaker during a call when PipeWire splits the UCM Voice Call verb into one
+# profile per output (Earpiece and Speaker share a PCM). 9999 keeps Alpine
+# from replacing it; rebase by hand when Alpine moves on.
+# Contributor: TimotheeLF <timotheel-f@protonmail.com>
+# Maintainer: TimotheeLF <timotheel-f@protonmail.com>
+pkgname=callaudiod
+_pkgver=0.1.99
+pkgver=9999$_pkgver
+pkgrel=0
+pkgdesc="Call audio routing daemon"
+url="https://gitlab.com/mobian1/callaudiod"
+arch="aarch64"
+license="GPL-3.0-or-later"
+makedepends="meson alsa-lib-dev appstream-dev glib-dev pulseaudio-dev"
+subpackages="
+	$pkgname-dev
+	$pkgname-libs
+	callaudiocli
+	"
+source="https://gitlab.com/mobian1/callaudiod/-/archive/$_pkgver/callaudiod-$_pkgver.tar.gz
+	0001-pulse-switch-voice-profiles-for-split-speaker-outputs.patch
+	"
+builddir="$srcdir/callaudiod-$_pkgver"
+
+build() {
+	abuild-meson -Db_lto=true . output
+	meson compile -C output
+}
+
+check() {
+	meson test --print-errorlogs -C output
+}
+
+package() {
+	depends="callaudiocli=$pkgver-r$pkgrel"
+	provider_priority=100
+
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+callaudiocli() {
+	pkgdesc="CLI for callaudiod"
+
+	amove usr/bin/callaudiocli
+}
+
+sha512sums="
+8243189cae4ea2d37f7773eaaf1f66b80357ca2803adcaed3eb57f57fce80c13e0667f1be7bac00256318f2cc2f790c388f1d56496d22f34377c4d6a0b43e5c0  callaudiod-0.1.99.tar.gz
+2dddebf5c294a84965de47ef1c78036892637af84ed9e2bb6afd331dba72d358597ad2e5fd93f2b5e8753af59930ca379db58a16ed2940df9dbb871296f12d88  0001-pulse-switch-voice-profiles-for-split-speaker-outputs.patch
+"

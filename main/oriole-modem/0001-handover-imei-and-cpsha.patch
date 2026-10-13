@@ -1,0 +1,116 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] handover: IMEI and cpsha in the handover block
+
+Like stock cbd, fill cpid[0]/cpid[1] from /chosen/config/imei1 and imei2
+and cpsig from <persistdir>/cpsha (new -p option, stock path
+/mnt/vendor/persist/modem). With them left zero the CP reports the IMEI as
+"***************" and the network denies registration.
+
+Local patch for the Pixel 6 Nura port, not sent upstream.
+---
+--- a/tinycbd.c
++++ b/tinycbd.c
+@@ -52,8 +52,13 @@
+  * fcn.0001b5f0 in RE/cbd/handover.c). Its values come from the CDT that ABL
+  * also writes to /chosen/plat, in the order of the cdt_hwid sscanf
+  * (RE/cbd/cdt_hwid.c): platform, product, stage, major, minor, variant,
+- * modem_sku, modem_hw, rf_sub, rf_cfg. cpid[] (IMEI1/2) and cpsig (cpsha) are
+- * left zero on purpose.
++ * modem_sku, modem_hw, rf_sub, rf_cfg.
++ *
++ * Local change (Pixel 6 Nura port): like stock cbd (fcn 0x1b868 onwards), fill
++ * cpid[0]/cpid[1] from /chosen/config/imei1 and imei2 (16 bytes each, read
++ * as is) and cpsig from <persist>/cpsha (64 bytes, stock path
++ * /mnt/vendor/persist/modem). With them left zero the CP reports the IMEI as
++ * "***************" and network registration is denied.
+  */
+ struct handover_block {
+ 	uint32_t version;	/* 0x00: 1 */
+@@ -84,6 +89,29 @@
+ 	       "must match cpif struct t_handover_block_info");
+ 
+ #define CHOSEN_PLAT	"/sys/firmware/devicetree/base/chosen/plat/"
++#define CHOSEN_CONFIG	"/sys/firmware/devicetree/base/chosen/config/"
++
++static const char *persistdir = "/mnt/vendor/persist/modem";
++
++/* Read exactly len bytes of path into buf; -1 (buf untouched) otherwise. */
++static int read_exact(const char *path, void *buf, size_t len)
++{
++	uint8_t tmp[64];
++	FILE *f;
++	size_t n;
++
++	if (len > sizeof(tmp))
++		return -1;
++	f = fopen(path, "rb");
++	if (!f)
++		return -1;
++	n = fread(tmp, 1, len, f);
++	fclose(f);
++	if (n != len)
++		return -1;
++	memcpy(buf, tmp, len);
++	return 0;
++}
+ 
+ /* One big-endian u32 cell from /chosen/plat; 0 when absent. */
+ static uint32_t plat_u32(const char *name)
+@@ -121,6 +149,21 @@
+ 	hb.product = plat_u32("product");
+ 	hb.stage = plat_u32("stage");
+ 
++	if (read_exact(CHOSEN_CONFIG "imei1", hb.cpid[0], 16) != 0)
++		fprintf(stderr, "handover: no imei1 in /chosen/config\n");
++	if (read_exact(CHOSEN_CONFIG "imei2", hb.cpid[1], 16) != 0)
++		fprintf(stderr, "handover: no imei2 in /chosen/config\n");
++	{
++		char path[256];
++
++		snprintf(path, sizeof(path), "%s/cpsha", persistdir);
++		if (read_exact(path, hb.cpsig, 64) != 0)
++			fprintf(stderr, "handover: cannot read 64 bytes of %s\n", path);
++	}
++	printf("handover: imei1 %s, imei2 %s, cpsha %s\n",
++	       hb.cpid[0][0] ? "set" : "EMPTY", hb.cpid[1][0] ? "set" : "EMPTY",
++	       hb.cpsig[0] ? "set" : "EMPTY");
++
+ 	printf("handover: project %u major %u minor %u sku %u hw %u rf_sub %u rf_cfg %u product %u stage %u\n",
+ 	       hb.project_id, hb.major_id, hb.minor_id, hb.modem_sku,
+ 	       hb.modem_hw, hb.rf_sub, hb.rf_config, hb.product, hb.stage);
+@@ -704,7 +747,7 @@
+ static void usage(const char *argv0)
+ {
+ 	fprintf(stderr,
+-		"usage: %s [-c chunk] [-d node] [-i modem.bin] [-n nvdir] <command>\n"
++		"usage: %s [-c chunk] [-d node] [-i modem.bin] [-n nvdir] [-p persistdir] <command>\n"
+ 		"\n"
+ 		"  toc            list the sections in the image\n"
+ 		"  boot           upload BOOT and start the CP bootloader\n"
+@@ -726,6 +769,7 @@
+ 		"  replay_region.bin from modem_userdata.\n"
+ 		"\n"
+ 		"-c: data bytes per std_udl frame, max 0xC000 (default)\n"
++		"-p: directory holding cpsha (default /mnt/vendor/persist/modem)\n"
+ 		"\n"
+ 		"defaults: -d /dev/umts_boot0  -i ./modem.bin\n"
+ 		"          -n /mnt/nv\n",
+@@ -744,7 +788,7 @@
+ 	int opt;
+ 	int rc = 1;
+ 
+-	while ((opt = getopt(argc, argv, "c:d:i:n:h")) != -1) {
++	while ((opt = getopt(argc, argv, "c:d:i:n:p:h")) != -1) {
+ 		switch (opt) {
+ 		case 'c':
+ 			udl_chunk = strtoul(optarg, NULL, 0);
+@@ -762,6 +806,9 @@
+ 		case 'n':
+ 			nvdir = optarg;
+ 			break;
++		case 'p':
++			persistdir = optarg;
++			break;
+ 		default:
+ 			usage(argv[0]);
+ 			return 1;

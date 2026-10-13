@@ -1,0 +1,25 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] lxc: bind the host GNSS socket directory into the container
+
+A vendor GNSS HAL (android/gnss-hal) reads NMEA from
+/run/waydroid-gnss/nmea.sock on the host, which bcm4776-gnssd serves
+with group gps (1021). Bind the directory to /dev/waydroid-gnss when it
+exists. The session config is rewritten on every session start, so this
+needs no "waydroid upgrade".
+---
+--- a/tools/helpers/lxc.py
++++ b/tools/helpers/lxc.py
+@@ -209,6 +209,13 @@
+     if not make_entry(session["waydroid_data"], "data", options="rbind 0 0"):
+         raise OSError("Failed to bind userdata")
+ 
++    # Host GNSS: a vendor GNSS HAL reads NMEA from a socket in this
++    # directory (group gps, so apps can't). Regenerated per session, so it
++    # follows the host service without a "waydroid upgrade".
++    gnss_dir = "/run/waydroid-gnss"
++    if os.path.isdir(gnss_dir):
++        make_entry(gnss_dir, "dev/waydroid-gnss", options="bind,create=dir,optional 0 0")
++
+     lxc_path = tools.config.defaults["lxc"] + "/waydroid"
+     config_nodes_tmp_path = args.work + "/config_session"
+     with open(config_nodes_tmp_path, "w") as f:
