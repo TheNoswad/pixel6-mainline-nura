@@ -21,8 +21,8 @@ about backups and the bootloader.
 
 ## Status
 
-Tested on one Pixel 6 (stock build CP1A.260405.005) with Plasma
-Mobile, on a T-Mobile US network (Mint Mobile SIM).
+Tested on one Pixel 6 (stock build CP1A.260405.005) with both Phosh and
+Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
 
 | Works | Notes |
 |---|---|

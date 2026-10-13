@@ -52,8 +52,9 @@ manager) yet.
   critical trip and shut down.
 - Every cpufreq change is an ACPM IPC. `oriole-cpufreq-ratelimit` sets the
   schedutil rate limit to 10 ms, which removed most of the UI stutter.
-- `oriole-ui-uclamp` gives the shell and compositor a utilization floor so
-  they don't run on the little cores at low clocks.
+- `oriole-ui-uclamp` gives Phosh's shell and compositor (phosh, phoc, and
+  phrog on the greeter) a utilization floor so they don't run on the little
+  cores at low clocks. It only applies to Phosh.
 
 ## Suspend
 

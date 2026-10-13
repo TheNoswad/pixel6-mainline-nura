@@ -50,7 +50,7 @@ Settings > System > Developer options, enable "OEM unlocking". Then:
     pmbootstrap init
         # Work path: anything; pmaports location: the pmaports checkout above
         # Channel: edge, vendor: google, device: oriole
-        # User interface: plasma-mobile (the one tested)
+        # User interface: phosh or plasma-mobile (both tested)
 
 Build the device packages once so you see build errors before installing
 (firmware-google-oriole downloads Google's factory image here):
