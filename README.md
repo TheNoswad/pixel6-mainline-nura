@@ -45,6 +45,7 @@ Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
 | Haptics | Calibrated per phone from the persist partition |
 | Front and ultra-wide cameras | Work in apps; preview is choppy, colours need tuning (ultra-wide looks hazy, no colour calibration) |
 | Game controllers | USB and Bluetooth (DualShock/DualSense, Xbox, Switch, Steam and others), with rumble; Steam Input works |
+| U-Boot + systemd-boot (optional) | M8's U-Boot started by the stock bootloader; kernel updates without flashing. New, see INSTALL.md |
 | Waydroid | Hardware GL, GPS, sensors (Android-side parts are manual builds: [android/](android/README.md)) |
 
 **Known problems and missing features**

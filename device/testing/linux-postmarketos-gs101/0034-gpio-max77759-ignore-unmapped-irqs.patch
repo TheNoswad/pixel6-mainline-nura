@@ -1,0 +1,41 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] gpio: max77759: ignore interrupts of unmapped GPIOs
+
+When GPIO5/6 interrupt status is set for a GPIO that was never requested
+as an interrupt, irq_find_mapping() returns 0 and handle_nested_irq(0)
+dereferences a NULL descriptor, killing the max77759 interrupt thread
+(seen on a USB-C disconnect with a burst of FRS signals: charger and fuel
+gauge stop being serviced). Ack and skip such interrupts.
+---
+--- a/drivers/gpio/gpio-max77759.c	2026-10-14 14:12:13.749676023 -0500
++++ b/drivers/gpio/gpio-max77759.c	2026-10-14 14:12:13.761046088 -0500
+@@ -409,6 +409,8 @@
+ 			break;
+ 
+ 		for_each_set_bit(offset, &pending, MAX77759_N_GPIOS) {
++			unsigned int virq;
++
+ 			/*
+ 			 * ACK interrupt by writing 1 to bit 'offset', all
+ 			 * others need to be written as 0. This needs to be
+@@ -418,8 +420,18 @@
+ 			regmap_write(chip->map, MAX77759_MAXQ_REG_UIC_INT1,
+ 				     BIT(offset));
+ 
+-			handle_nested_irq(irq_find_mapping(gc->irq.domain,
+-							   offset));
++			/*
++			 * An interrupt can be pending for a GPIO nobody has
++			 * requested as an interrupt (no mapping yet); there is
++			 * no descriptor to hand it to then.
++			 */
++			virq = irq_find_mapping(gc->irq.domain, offset);
++			if (virq)
++				handle_nested_irq(virq);
++			else
++				dev_dbg_ratelimited(gc->parent,
++						    "spurious IRQ for GPIO%d\n",
++						    offset + 1);
+ 
+ 			handled = true;
+ 		}

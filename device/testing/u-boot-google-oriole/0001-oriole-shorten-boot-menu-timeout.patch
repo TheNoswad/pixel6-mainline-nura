@@ -1,0 +1,18 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] oriole: shorten the boot menu timeout to 5 s
+
+The default entry (systemd-boot) starts after 30 s otherwise, on every
+boot.
+---
+diff --git a/include/configs/oriole.h b/include/configs/oriole.h
+index e6a6f785..043cdf01 100644
+--- a/include/configs/oriole.h
++++ b/include/configs/oriole.h
+@@ -53,6 +53,6 @@
+ 	"bootmenu_10=Scan UFS=ufs init; scsi scan\0" \
+ 	"bootmenu_11=Reboot=reset\0" \
+ 	"bootmenu_12=Power off=poweroff\0" \
+-	"bootcmd=bootmenu 30\0"
++	"bootcmd=bootmenu 5\0"
+ 
+ #endif

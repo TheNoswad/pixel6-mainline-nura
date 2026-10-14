@@ -1,0 +1,53 @@
+# U-Boot for the Google Pixel 6 (oriole), by M8 (github.com/m8l8th814n-eng).
+# The stock bootloader loads it from the boot partition like a kernel; its
+# default entry runs systemd-boot from pmOS_boot (boot-deploy installs it
+# there), so kernel upgrades take effect without flashing boot.img. The
+# "Boot postmarketOS" entry boots vmlinuz/initramfs/dtb directly.
+pkgname=u-boot-google-oriole
+pkgver=2026.10_rc2_git20261008
+pkgrel=1
+_commit="c9f19f1dacb8e49b345eb89b42f96144db5f7269"
+pkgdesc="U-Boot for the Google Pixel 6"
+url="https://github.com/m8l8th814n-eng/u-boot-gs101"
+arch="aarch64"
+license="GPL-2.0-or-later"
+makedepends="
+	bash
+	bc
+	bison
+	dtc
+	flex
+	gnutls-dev
+	openssl-dev
+	py3-elftools
+	py3-setuptools
+	python3
+	swig
+	util-linux-dev
+	"
+options="!check pmb:cross-native"
+source="
+	u-boot-gs101-$_commit.tar.gz::https://github.com/m8l8th814n-eng/u-boot-gs101/archive/$_commit.tar.gz
+	0001-oriole-shorten-boot-menu-timeout.patch
+	"
+builddir="$srcdir/u-boot-gs101-$_commit"
+
+build() {
+	export BUILD_DIR="$builddir"/build
+	make O="$BUILD_DIR" HOSTCC=gcc ARCH=arm oriole_defconfig
+	make O="$BUILD_DIR" HOSTCC=gcc ARCH=arm
+	# Android boot image (header v4) around u-boot.bin
+	python3 board/google/oriole/mkbootimg.py \
+		"$BUILD_DIR"/u-boot.bin "$BUILD_DIR"/u-boot-boot.img
+}
+
+package() {
+	install -Dm644 "$builddir"/build/u-boot-boot.img \
+		"$pkgdir"/usr/share/u-boot/google-oriole/u-boot-boot.img
+	install -Dm644 "$builddir"/build/u-boot.bin \
+		"$pkgdir"/usr/share/u-boot/google-oriole/u-boot.bin
+}
+sha512sums="
+4f5465757c85de9df492ac6e871c2dfbad80454684ec1da98bf41f76264996739066b17aa77beea3138d1b1c2dbde37c42b92cbe4480f859d3cd79c4a44a19c3  u-boot-gs101-c9f19f1dacb8e49b345eb89b42f96144db5f7269.tar.gz
+c194417df6b892fad8513f286d584ee75d3389cd691765751a24e433b4808bb902d011ead53dcef4f583429d662d4b13663a24939b560a0b66e1f7f660aecc53  0001-oriole-shorten-boot-menu-timeout.patch
+"

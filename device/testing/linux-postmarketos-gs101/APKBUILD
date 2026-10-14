@@ -3,7 +3,7 @@
 maintainer="Ingo Reitz <9l@9lo.re>"
 pkgname=linux-postmarketos-gs101
 pkgver=7.2.0_rc3
-pkgrel=39
+pkgrel=42
 pkgdesc="Google gs101 (Pixel 6 Series) kernel, M8 gs101-mainline tree"
 arch="aarch64"
 _carch="arm64"
@@ -62,6 +62,8 @@ source="
 	0030-max17042-clear-tex.patch
 	0031-imx386-disable-embedded-data.patch
 	0032-cs35l41dna-verify-otp-read.patch
+	0033-aoc-voice-call-mic-capture-switch.patch
+	0034-gpio-max77759-ignore-unmapped-irqs.patch
 "
 builddir="$srcdir/gs101-mainline-$_commit"
 
@@ -393,6 +395,10 @@ package() {
 
 	install -Dm644 "$builddir/arch/$_carch/boot/Image.lz4" \
 		"$pkgdir/boot/vmlinuz"
+	# EFI stub image for systemd-boot (U-Boot's EFI); vmlinuz stays for
+	# boot.img and U-Boot's direct boot
+	install -Dm644 "$builddir/arch/$_carch/boot/Image" \
+		"$pkgdir/boot/vmlinuz.efi"
 
 	mkdir -p "$pkgdir"/etc/modprobe.d
 	echo "blacklist brcmfmac" > "$pkgdir"/etc/modprobe.d/gs101-blacklist-brcmfmac.conf
@@ -433,4 +439,6 @@ c9c0b2e5bd65302df2d6f83605e200afeb79823d918d8a9ef6ba70e617d714b4d3d37b4aab301584
 dff392c3c83b06ec82045e60fa0bffeca6a96ce4e42d8cdf2a1be0b99eb7d6c175df54b1b070e72cbb7cd7e6b063620330e41d73073a1d50b14cfe77b98898f0  0030-max17042-clear-tex.patch
 4691deb5a01b007438d67ed6f2f4ee62102c93931214032812fbd222171b82f2e4308b023f7a467483aa67b3646f3a297993e24603d4c7aa9a7d97753925ffbe  0031-imx386-disable-embedded-data.patch
 890bcd6dda83945ef8a1874f94017ed6cf70c5ce30860fb936b1fa706a5d53a95470db291f4f043966ddd47124d01c9bbea4e1f0383be39a201e85e5ff9aec25  0032-cs35l41dna-verify-otp-read.patch
+10dccceeb99ba452b736ae39ee6ad3263f25efe34d2400810e4ac4eab4347fb5f8a8972003da67968db8028cf9b6b412cb4e18f740456942ac5e15e6630436a5  0033-aoc-voice-call-mic-capture-switch.patch
+b6477bafba5bc6f0d5b96cde103536ae2df10ebd9e17c31a7feb2584d621f96377dd1724aeaf7ecc15e3044f14d7f343918381ed28e40283879cee13f89bc2a0  0034-gpio-max77759-ignore-unmapped-irqs.patch
 "

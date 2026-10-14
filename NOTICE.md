@@ -23,6 +23,10 @@ These are downloaded by the APKBUILDs, not stored here.
   shipped in Google's [amplifiers kernel modules](https://android.googlesource.com/kernel/google-modules/amplifiers)
   @ 33976d763bc0, GPL-2.0, with our port on top. The original copyright
   notices are kept in the patch.
+- **U-Boot:** [github.com/m8l8th814n-eng/u-boot-gs101](https://github.com/m8l8th814n-eng/u-boot-gs101)
+  @ c9f19f1dacb8e49b345eb89b42f96144db5f7269, GPL-2.0-or-later. Credit for
+  the gs101 port goes to its authors; our only patch shortens the boot
+  menu timeout.
 - **tinycbd:** [github.com/m8l8th814n-eng/tinycbd](https://github.com/m8l8th814n-eng/tinycbd)
   @ 4040055106680fd695816c8a1b88e2c447309278. **It has no licence**, so it
   is not included here: `oriole-modem` fetches it at build time and only

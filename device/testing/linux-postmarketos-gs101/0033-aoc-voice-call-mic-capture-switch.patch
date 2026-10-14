@@ -1,0 +1,62 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] aoc: add a Voice Call Mic Capture Switch
+
+"Voice Call Mic Mute" is inverted (1 = muted), so UCM cannot use it as a
+CaptureSwitch and callaudiod/PipeWire mic mute does not reach the call
+uplink. Add the same control with the ALSA switch polarity, sharing its
+state.
+---
+--- a/aoc/alsa/aoc_alsa_ctl.c	2026-10-14 12:47:48.488543799 -0500
++++ b/aoc/alsa/aoc_alsa_ctl.c	2026-10-14 12:47:48.498417401 -0500
+@@ -1480,6 +1480,42 @@
+ 	return 0;
+ }
+ 
++/*
++ * "Voice Call Mic Mute" with the ALSA switch polarity (1 = mic live), so
++ * UCM can use it as a CaptureSwitch.
++ */
++static int voice_call_mic_switch_get(struct snd_kcontrol *kcontrol,
++				     struct snd_ctl_elem_value *ucontrol)
++{
++	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
++
++	if (mutex_lock_interruptible(&chip->audio_mutex))
++		return -EINTR;
++
++	ucontrol->value.integer.value[0] = !chip->voice_call_mic_mute;
++
++	mutex_unlock(&chip->audio_mutex);
++	return 0;
++}
++
++static int voice_call_mic_switch_set(struct snd_kcontrol *kcontrol,
++				     struct snd_ctl_elem_value *ucontrol)
++{
++	struct aoc_chip *chip = snd_kcontrol_chip(kcontrol);
++	int mute = !ucontrol->value.integer.value[0];
++
++	if (mutex_lock_interruptible(&chip->audio_mutex))
++		return -EINTR;
++
++	if (chip->voice_call_mic_mute != mute) {
++		chip->voice_call_mic_mute = mute;
++		aoc_voice_call_mic_mute(chip, mute);
++	}
++
++	mutex_unlock(&chip->audio_mutex);
++	return 0;
++}
++
+ static int voice_call_audio_enable_get(struct snd_kcontrol *kcontrol,
+ 				   struct snd_ctl_elem_value *ucontrol)
+ {
+@@ -2676,6 +2712,8 @@
+ 		     voice_call_mic_source_get, voice_call_mic_source_set),
+ 	SOC_SINGLE_EXT("Voice Call Mic Mute", SND_SOC_NOPM, 0, 1, 0,
+ 		       voice_call_mic_mute_get, voice_call_mic_mute_set),
++	SOC_SINGLE_EXT("Voice Call Mic Capture Switch", SND_SOC_NOPM, 0, 1, 0,
++		       voice_call_mic_switch_get, voice_call_mic_switch_set),
+ 	SOC_SINGLE_EXT("Voice Call Audio Enable", SND_SOC_NOPM, 0, 1, 0,
+ 		       voice_call_audio_enable_get,
+ 		       voice_call_audio_enable_set),

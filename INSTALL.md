@@ -70,6 +70,30 @@ Phone in fastboot mode (power + volume down), connected by USB:
 
 To try a kernel without flashing it: `pmbootstrap flasher boot`.
 
+### Optional: U-Boot + systemd-boot
+
+Instead of the stock bootloader loading a kernel image from `boot`, you can
+flash [M8's U-Boot](https://github.com/m8l8th814n-eng/u-boot-gs101)
+(`u-boot-google-oriole`) there. The stock bootloader then starts U-Boot,
+which starts systemd-boot from the pmOS boot partition, which starts the
+kernel. Kernel updates then only need an install and a reboot. This is new
+(tested on one phone) and the stock-bootloader way above keeps working.
+
+First try it from RAM. Copy `/usr/share/u-boot/google-oriole/u-boot-boot.img`
+from the phone to the PC, then with the phone in fastboot mode:
+
+    fastboot boot u-boot-boot.img
+
+U-Boot shows a menu for 5 s (volume keys to move, power to select): the
+default entry is systemd-boot; "Boot postmarketOS" loads the kernel
+directly and is the fallback. If it boots fine, keep a copy of your
+current `/boot/boot.img` as a rescue image and flash U-Boot to the active
+slot (`fastboot getvar current-slot`, here `b`):
+
+    fastboot flash boot_b u-boot-boot.img
+
+To go back: `fastboot flash boot_b boot.img` (the copy you kept).
+
 The first boot takes a while: it resizes the root filesystem and the modem
 needs about half a minute after the UI is up. Plugging a charger into the
 switched-off phone boots it.
@@ -113,7 +137,8 @@ sideloads packages to a running phone (`PHONE=user@host`).
 
 Kernel packages of the same version share `/lib/modules`: after installing
 a new kernel package, always flash it (`pmbootstrap flasher flash_kernel`)
-before rebooting.
+before rebooting. With U-Boot flashed, just reboot instead, and **don't**
+run `flash_kernel`: it would overwrite U-Boot with a kernel image.
 
 ## Going back to Android
 
