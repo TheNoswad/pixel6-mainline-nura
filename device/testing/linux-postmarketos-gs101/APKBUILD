@@ -3,7 +3,7 @@
 maintainer="Ingo Reitz <9l@9lo.re>"
 pkgname=linux-postmarketos-gs101
 pkgver=7.2.0_rc3
-pkgrel=34
+pkgrel=39
 pkgdesc="Google gs101 (Pixel 6 Series) kernel, M8 gs101-mainline tree"
 arch="aarch64"
 _carch="arm64"
@@ -60,6 +60,8 @@ source="
 	0028-input-cs40l2x-haptics-driver.patch
 	0029-gs101-oriole-cs40l25a-haptics.patch
 	0030-max17042-clear-tex.patch
+	0031-imx386-disable-embedded-data.patch
+	0032-cs35l41dna-verify-otp-read.patch
 "
 builddir="$srcdir/gs101-mainline-$_commit"
 
@@ -83,6 +85,9 @@ builddir="$srcdir/gs101-mainline-$_commit"
 # the VL53L1X laser ranger; the DT nodes are already enabled. The SLG51000 is
 # switched on through S2MPG11 GPIOs, so it needs GPIO_S2MPG1X too. libcamera's
 # simple pipeline + SoftISP does the rest.
+# Game controllers (USB and Bluetooth): hidraw (Steam Input and SDL talk to
+# pads through it), joydev, xpad and the HID drivers for DualShock/DualSense,
+# Steam, Switch, Xbox (Bluetooth), Logitech and Stadia pads, with rumble.
 _extra_config="
 CONFIG_DRM_GS101=m
 CONFIG_DRM_PANEL_SAMSUNG_S6E3FC3=m
@@ -186,6 +191,24 @@ CONFIG_VIDEO_LM3644=m
 CONFIG_VL53L1X_I2C=m
 # Pixel 6 haptics (CS40L25A), patch 0028
 CONFIG_INPUT_CS40L2X=m
+CONFIG_HIDRAW=y
+CONFIG_INPUT_JOYDEV=m
+CONFIG_INPUT_JOYSTICK=y
+CONFIG_JOYSTICK_XPAD=m
+CONFIG_JOYSTICK_XPAD_FF=y
+CONFIG_JOYSTICK_XPAD_LEDS=y
+CONFIG_HID_PLAYSTATION=m
+CONFIG_PLAYSTATION_FF=y
+CONFIG_HID_SONY=m
+CONFIG_SONY_FF=y
+CONFIG_HID_STEAM=m
+CONFIG_STEAM_FF=y
+CONFIG_HID_NINTENDO=m
+CONFIG_NINTENDO_FF=y
+CONFIG_HID_MICROSOFT=m
+CONFIG_HID_LOGITECH=m
+CONFIG_LOGITECH_FF=y
+CONFIG_HID_GOOGLE_STADIA_FF=m
 "
 
 # Samsung SysMMU v8. The DECON sits behind sysmmu_dpu0; without this driver
@@ -285,7 +308,9 @@ prepare() {
 			UCLAMP_TASK_GROUP=y CPU_IDLE_GOV_TEO=y LRU_GEN_ENABLED=y \
 			GPIO_S2MPG1X=m REGULATOR_SLG51000=m PHY_EXYNOS_MIPI_CSIS_GS101=m \
 			VIDEO_GS101_MIPI_CSIS=m VIDEO_IMX355=m VIDEO_S5KGN1=m \
-			VIDEO_IMX386=m VIDEO_LM3644=m VL53L1X_I2C=m INPUT_CS40L2X=m; do
+			VIDEO_IMX386=m VIDEO_LM3644=m VL53L1X_I2C=m INPUT_CS40L2X=m \
+			HIDRAW=y INPUT_JOYDEV=m JOYSTICK_XPAD=m HID_PLAYSTATION=m \
+			HID_SONY=m HID_STEAM=m HID_NINTENDO=m HID_MICROSOFT=m; do
 		grep -q "^CONFIG_$opt\$" .config || { error "CONFIG_$opt dropped by olddefconfig"; return 1; }
 	done
 }
@@ -406,4 +431,6 @@ c9c0b2e5bd65302df2d6f83605e200afeb79823d918d8a9ef6ba70e617d714b4d3d37b4aab301584
 1b9dc38fd73864956410335614c07fdbfe54035cbb99d69e7e92b475f125729ad47f6eba738df54dc26f652900f246a64f8d5ae308ed894daa3ae403de3ec033  0028-input-cs40l2x-haptics-driver.patch
 8b2f8c2386f5baa3b319d532f08676ea2c8e895f8f4f8dd72681704baeab56844a9ea76c0133f311f3fc5129a79f17ed69242235606155d8180c31523919cfe5  0029-gs101-oriole-cs40l25a-haptics.patch
 dff392c3c83b06ec82045e60fa0bffeca6a96ce4e42d8cdf2a1be0b99eb7d6c175df54b1b070e72cbb7cd7e6b063620330e41d73073a1d50b14cfe77b98898f0  0030-max17042-clear-tex.patch
+4691deb5a01b007438d67ed6f2f4ee62102c93931214032812fbd222171b82f2e4308b023f7a467483aa67b3646f3a297993e24603d4c7aa9a7d97753925ffbe  0031-imx386-disable-embedded-data.patch
+890bcd6dda83945ef8a1874f94017ed6cf70c5ce30860fb936b1fa706a5d53a95470db291f4f043966ddd47124d01c9bbea4e1f0383be39a201e85e5ff9aec25  0032-cs35l41dna-verify-otp-read.patch
 "

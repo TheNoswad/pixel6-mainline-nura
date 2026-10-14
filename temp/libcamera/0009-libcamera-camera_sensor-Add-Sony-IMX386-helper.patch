@@ -1,0 +1,62 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] libcamera: camera_sensor: Add Sony IMX386 sensor properties
+ and helper
+
+The Pixel 6 rear ultra-wide is a Sony IMX386. Its kernel driver uses the
+same analogue gain code as the IMX355 (gain = 1024 / (1024 - code), max
+960 = 16x) and the sensor's black level is 64 at 10 bits (measured on
+oriole: dark frames sit at 64-65). Add the helper and the static
+properties the software ISP needs; the test pattern indices follow the
+kernel imx386 driver's menu.
+
+Based on the imx355/imx386 helpers in m8l8th814n-eng/libcamera-gs101
+(patch 0010 by Simon).
+---
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -629,6 +629,18 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx355", CameraSensorHelperImx355)
+ 
++class CameraSensorHelperImx386 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx386()
++	{
++		/* 64 at 10 bits, measured. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx386", CameraSensorHelperImx386)
++
+ class CameraSensorHelperImx415 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -284,6 +284,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 2
+ 			},
+ 		} },
++		{ "imx386", {
++			.unitCellSize = { 1250, 1250 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "imx415", {
+ 			.unitCellSize = { 1450, 1450 },
+ 			.testPatternModes = {},

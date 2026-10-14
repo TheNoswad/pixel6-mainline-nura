@@ -43,7 +43,8 @@ Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
 | GPS | Own driver, no Broadcom userspace; every fix is a cold start (~40 s outdoors) |
 | Sensors | Orientation, ambient light (auto-brightness), compass |
 | Haptics | Calibrated per phone from the persist partition |
-| Front camera | Works in apps; preview is choppy, colours need tuning |
+| Front and ultra-wide cameras | Work in apps; preview is choppy, colours need tuning (ultra-wide looks hazy, no colour calibration) |
+| Game controllers | USB and Bluetooth (DualShock/DualSense, Xbox, Switch, Steam and others), with rumble; Steam Input works |
 | Waydroid | Hardware GL, GPS, sensors (Android-side parts are manual builds: [android/](android/README.md)) |
 
 **Known problems and missing features**
@@ -60,7 +61,9 @@ Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
   Battery life is short (about 600 mA idle drain measured).
 - No double-tap to wake.
 - Vulkan (PanVK) is new and opt-in: set `PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1`.
-- Rear cameras (main GN1, ultra-wide) don't work.
+- The rear main camera (GN1) doesn't work.
+- Camera apps (Snapshot, Plasma Camera) don't rotate the preview to the
+  display orientation.
 - GPS has no warm start yet.
 
 [HARDWARE.md](HARDWARE.md) has the per-component details.

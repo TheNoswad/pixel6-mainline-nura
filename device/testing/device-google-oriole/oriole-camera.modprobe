@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: MIT
-# Local (oriole): the two rear sensors are not usable yet, and apps tend to
+# Local (oriole): the rear main sensor is not usable yet, and apps tend to
 # open the first back camera by default.
 # - S5KGN1 (main): the C-PHY link never delivers a clean frame (CSIS
 #   ERR_FS/ERR_FE, all-zero buffers).
-# - IMX386 (ultrawide): streams, but the CSIS stops completing buffers
-#   after ~40 frames.
-# Keep them from binding so that only the working front IMX355 is
-# offered. `modprobe s5kgn1` / `modprobe imx386` still loads them by hand.
+# Keep it from binding so that only the working cameras (front IMX355,
+# ultra-wide IMX386) are offered. `modprobe s5kgn1` still loads it by hand.
 blacklist s5kgn1
-blacklist imx386

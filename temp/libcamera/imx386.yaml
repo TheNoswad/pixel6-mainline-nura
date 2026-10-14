@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: CC0-1.0
+#
+# gs101 (Pixel 6) IMX386 rear ultra-wide. Uncalibrated: no CCM yet (needs
+# per-sensor calibration). Black level 64 at 10 bits, as the helper.
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      blackLevel: 4096
+  - Awb:
+  - Adjust:
+  - Agc:
+...

@@ -101,7 +101,9 @@ Audio goes through the AoC DSP to two cs35l41 amplifiers (top/earpiece and
 bottom). 0006 starts the speaker protection algorithm after the amplifier
 PLL locks; before that the amps muted after a few streams. The device
 package applies the phone's speaker calibration from persist and ships the
-ALSA UCM configuration (HiFi and Voice Call).
+ALSA UCM configuration (HiFi and Voice Call). 0032 reads the amplifiers'
+OTP trim over SPI in small PIO transfers and checks it: the gs101 SPI
+DMA path corrupted the read, and the bad trim made the speakers distort.
 
 ## Modem (Samsung Shannon 5123 on PCIe)
 
@@ -163,8 +165,19 @@ loads this phone's calibration from persist, like the stock vibrator HAL.
 The front camera (IMX355) works through the gs101 MIPI-CSIS receiver and
 libcamera's software ISP (`temp/libcamera` adds the pipeline). 0020 makes
 the frame buffers importable by the GPU and 0021 fixes torn frames.
-Preview is choppy and colours are off (no tuning yet). The rear main
-(GN1) and ultra-wide (IMX386) cameras are disabled; the torch works.
+The ultra-wide (IMX386) works the same way: 0031 turns off its embedded
+data lines (the short embedded-data line stalled the receiver), and
+`temp/libcamera` adds an IMX386 sensor helper and an uncalibrated tuning
+file. Preview is choppy and colours are off (no colour calibration yet).
+The rear main camera (GN1) is disabled; the torch works.
+
+## Game controllers
+
+The kernel enables hidraw, joydev, xpad and the HID drivers for
+PlayStation, Sony, Steam, Nintendo, Microsoft (Xbox over Bluetooth),
+Logitech and Stadia controllers, with force feedback. Steam Input needs
+user access to `/dev/uinput` and the controllers' hidraw nodes (for
+example Alpine's `steam-devices` rules).
 
 ## Waydroid
 
@@ -176,4 +189,4 @@ options, the iptables modules (device package), the GNSS socket bind mount
 ## Not working
 
 Double-tap to wake (the touch driver has no gesture mode), deep
-suspend, rear cameras, GPS warm start, carrier detection from the SIM.
+suspend, the rear main camera, GPS warm start, carrier detection from the SIM.

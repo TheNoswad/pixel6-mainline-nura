@@ -1,0 +1,125 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] cs35l41dna: read OTP in PIO-sized chunks and verify it
+
+cs35l41_otp_unpack reads all 32 OTP_MEM words in one 128-byte SPI read.
+On gs101 that is longer than the 64-byte s3c64xx FIFO, so it goes through
+DMA, and on some boots everything past the first 64 bytes comes back
+shifted by a bit (or differs on every read). The unpack then writes
+garbage into the analog trim registers (0x400c, 0x6e4c-0x6e64, 0x7068,
+0x741c, 0x7434, ...) and that amp plays only noise until a lucky boot.
+Every other register access is short and done in PIO.
+
+Read OTP_MEM 8 words at a time so it stays in PIO, and only unpack once
+two consecutive reads agree, up to 5 reads; fail the probe rather than
+mis-trim the amp if they never agree. Also restore the SPI clock when
+the read fails.
+
+Local only, not for upstream submission.
+---
+--- a/cs35l41dna/cs35l41.c	2026-10-13 23:50:29.874249483 -0500
++++ b/cs35l41dna/cs35l41.c	2026-10-14 00:31:20.593835129 -0500
+@@ -1889,11 +1889,35 @@
+ 	return NULL;
+ }
+ 
++#define CS35L41_OTP_READ_TRIES	5
++#define CS35L41_OTP_READ_CHUNK	8
++
++/*
++ * Read OTP_MEM in chunks small enough for the SPI controller to do in PIO.
++ * On gs101 a 128-byte read goes through DMA and, on some boots, the data
++ * past the first 64-byte FIFO load comes back shifted by a bit.
++ */
++static int cs35l41_otp_read(struct cs35l41_private *cs35l41, u32 *buf)
++{
++	int i, ret;
++
++	for (i = 0; i < CS35L41_OTP_SIZE_WORDS; i += CS35L41_OTP_READ_CHUNK) {
++		ret = regmap_bulk_read(cs35l41->regmap,
++				       CS35L41_OTP_MEM0 + i * sizeof(*buf),
++				       &buf[i], CS35L41_OTP_READ_CHUNK);
++		if (ret < 0)
++			return ret;
++	}
++
++	return 0;
++}
++
+ static int cs35l41_otp_unpack(void *data)
+ {
+ 	struct cs35l41_private *cs35l41 = data;
+ 	u32 *otp_mem = NULL;
+-	int i;
++	u32 *otp_chk = NULL;
++	int i, try;
+ 	int bit_offset, word_offset;
+ 	unsigned int bit_sum = 8;
+ 	u32 otp_val, otp_id_reg;
+@@ -1904,8 +1928,11 @@
+ 	u32 orig_spi_freq = 0;
+ 
+ 	otp_mem = kmalloc_array(32, sizeof(*otp_mem), GFP_KERNEL);
+-	if (!otp_mem)
+-		return -ENOMEM;
++	otp_chk = kmalloc_array(32, sizeof(*otp_chk), GFP_KERNEL);
++	if (!otp_mem || !otp_chk) {
++		ret = -ENOMEM;
++		goto err_otp_unpack;
++	}
+ 
+ 	ret = regmap_read(cs35l41->regmap, CS35L41_OTPID, &otp_id_reg);
+ 	if (ret < 0) {
+@@ -1930,12 +1957,21 @@
+ 		spi_setup(spi);
+ 	}
+ 
+-	ret = regmap_bulk_read(cs35l41->regmap, CS35L41_OTP_MEM0, otp_mem,
+-						CS35L41_OTP_SIZE_WORDS);
+-	if (ret < 0) {
+-		dev_err(cs35l41->dev, "Read OTP Mem failed\n");
+-		ret = -EINVAL;
+-		goto err_otp_unpack;
++	/*
++	 * A corrupted OTP read mis-trims the analog blocks for the whole
++	 * boot. Only accept the OTP once two consecutive reads agree.
++	 */
++	ret = cs35l41_otp_read(cs35l41, otp_mem);
++	for (try = 1; ret >= 0 && try < CS35L41_OTP_READ_TRIES; try++) {
++		ret = cs35l41_otp_read(cs35l41, otp_chk);
++		if (ret < 0)
++			break;
++		if (!memcmp(otp_mem, otp_chk,
++			    CS35L41_OTP_SIZE_WORDS * sizeof(*otp_mem)))
++			break;
++		dev_warn(cs35l41->dev, "OTP read %d mismatch, retrying\n",
++			 try);
++		swap(otp_mem, otp_chk);
+ 	}
+ 
+ 	if (cs35l41->bus_spi) {
+@@ -1943,6 +1979,17 @@
+ 		spi_setup(spi);
+ 	}
+ 
++	if (ret < 0) {
++		dev_err(cs35l41->dev, "Read OTP Mem failed\n");
++		ret = -EINVAL;
++		goto err_otp_unpack;
++	}
++	if (try == CS35L41_OTP_READ_TRIES) {
++		dev_err(cs35l41->dev, "OTP reads never agreed\n");
++		ret = -EIO;
++		goto err_otp_unpack;
++	}
++
+ 	otp_map = otp_map_match->map;
+ 
+ 	bit_offset = otp_map_match->bit_offset;
+@@ -2018,6 +2065,7 @@
+ 	ret = 0;
+ 
+ err_otp_unpack:
++	kfree(otp_chk);
+ 	kfree(otp_mem);
+ 	return ret;
+ }

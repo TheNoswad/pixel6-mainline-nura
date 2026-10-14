@@ -3,7 +3,7 @@ maintainer="Robert Mader <robert.mader@collabora.com>"
 pkgname=libcamera
 _pkgver=0.7.2
 pkgver=9999$_pkgver
-pkgrel=6
+pkgrel=7
 pkgdesc="Linux camera framework"
 url="https://libcamera.org/"
 arch="all"
@@ -49,6 +49,7 @@ _tuning_files="
 	hi846.yaml
 	imx355.yaml
 	imx363.yaml
+	imx386.yaml
 	imx371.yaml
 	imx376.yaml
 	imx519.yaml
@@ -66,6 +67,7 @@ source="https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$_pkgver/libc
 	0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
 	0007-pipeline-simple-Add-Google-gs101-MIPI-CSIS.patch
 	0008-egl-Import-16-bit-Bayer-as-GR88.patch
+	0009-libcamera-camera_sensor-Add-Sony-IMX386-helper.patch
 	qcam.desktop
 	$_tuning_files
 	"
@@ -188,10 +190,12 @@ b317cdc96f61682ee0bf26dfb7c4d6441db9a9c5b93ab53528121a8cd44862b3d59cbaa3881bb083
 47277fedc943ad45391ba150f1c4ae70b7bd041fb162239996fe5430429c50fe27a1c5915c9de90cb714ec578c68c4ba5e4c25a3431e35e721fdd232368b703f  0006-libcamera-Add-quad-Bayer-CFA-layout-support.patch
 e0fe3d3a066cda1ddf215a7e940aba97e9b158109321bea8ddd20d6448ff7193ec24ef3d6d66dab5bfe93d79e3e641edbe93c71f0712b3744f8c25e2768e6b31  0007-pipeline-simple-Add-Google-gs101-MIPI-CSIS.patch
 1227480844514df67a741ddf98ff10e0879a46248a113b39f7426b8f01f659a34c344a6e6c67f486ddf4976c810dba3550f6a488dfe0eeb17c736ff61d3ea86a  0008-egl-Import-16-bit-Bayer-as-GR88.patch
+ac1ace85b0bd230ee5316b05c045f5af1c6ce2b33e3fe04d585469dd0b4f6bccecc3336bb20c3d1e4c24becb734bfee12d93fc8c803ec86abdccf78fd46eff18  0009-libcamera-camera_sensor-Add-Sony-IMX386-helper.patch
 22167a4eceb6d1b40b0b7c45fdf116c71684f5340de7f767535cb8e160ad9d2ae0f00cb3d461f73a344520a48a4641cf46226841d78bee06bfbfd2a91337f754  qcam.desktop
 2ee566653b17d565d2c0de67cbe6ebad25df5aac6051cad78e6bae52016fa2ca0247e964d735ac776b3e0bd447ead9c4fcb26cd7629228cdba3ceb91b46f378f  hi846.yaml
 4942edd551dcf51630246f71e600c17760d3574d5d45e5530d6cfeefe2c9ab1a812fbe220f8e89d92e19a499c592b2507c801ca4eb74cd15fcecb60bff5c650b  imx355.yaml
 285c6d0d712df341c0117c3762ddc139f53f44e6be36c3388d1a62696429175e2916f392163131e21f410c3676f02f5d125f375171f45f8d82ad278aa5076c62  imx363.yaml
+57e4b518ac34be09a99cdca7524ea2acd26aeafe4a2ca33d7a16370a9ced9d9cc068d33b13e20141bc94955eb77b3b84bbedd22d156c463703fd0110c7bdbf91  imx386.yaml
 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx371.yaml
 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx376.yaml
 1b1f6d36311bee38006eaa1e380571fc9fbd5625fd72f63309426d3651483cef52a176d56cdebd2ce46cbb264684ede186740df169027d2bf27d0f3057da2f86  imx519.yaml
