@@ -3,7 +3,7 @@
 maintainer="Ingo Reitz <9l@9lo.re>"
 pkgname=linux-postmarketos-gs101
 pkgver=7.2.0_rc3
-pkgrel=33
+pkgrel=34
 pkgdesc="Google gs101 (Pixel 6 Series) kernel, M8 gs101-mainline tree"
 arch="aarch64"
 _carch="arm64"
@@ -59,6 +59,7 @@ source="
 	0027-bcmdhd-restart-interface-on-hang.patch
 	0028-input-cs40l2x-haptics-driver.patch
 	0029-gs101-oriole-cs40l25a-haptics.patch
+	0030-max17042-clear-tex.patch
 "
 builddir="$srcdir/gs101-mainline-$_commit"
 
@@ -404,4 +405,5 @@ c9c0b2e5bd65302df2d6f83605e200afeb79823d918d8a9ef6ba70e617d714b4d3d37b4aab301584
 4fdf06e480444b95856acb6dbeb437103e58f6401c814a9bf9d46480e092f59048aca7ce28ce1005ca784411ec4c616e0c976b5c9af5baa4b3f9271be9721e59  0027-bcmdhd-restart-interface-on-hang.patch
 1b9dc38fd73864956410335614c07fdbfe54035cbb99d69e7e92b475f125729ad47f6eba738df54dc26f652900f246a64f8d5ae308ed894daa3ae403de3ec033  0028-input-cs40l2x-haptics-driver.patch
 8b2f8c2386f5baa3b319d532f08676ea2c8e895f8f4f8dd72681704baeab56844a9ea76c0133f311f3fc5129a79f17ed69242235606155d8180c31523919cfe5  0029-gs101-oriole-cs40l25a-haptics.patch
+dff392c3c83b06ec82045e60fa0bffeca6a96ce4e42d8cdf2a1be0b99eb7d6c175df54b1b070e72cbb7cd7e6b063620330e41d73073a1d50b14cfe77b98898f0  0030-max17042-clear-tex.patch
 "

@@ -62,7 +62,6 @@ Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
 - Vulkan (PanVK) is new and opt-in: set `PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1`.
 - Rear cameras (main GN1, ultra-wide) don't work.
 - GPS has no warm start yet.
-- The fuel gauge reports a fixed battery temperature.
 
 [HARDWARE.md](HARDWARE.md) has the per-component details.
 
@@ -74,7 +73,7 @@ it is an overlay applied onto one pinned pmaports commit (`UPSTREAM`).
 | Path | What |
 |---|---|
 | `device/testing/device-google-oriole` | Device package: udev, systemd units, audio (UCM), stock partitions read-only |
-| `device/testing/linux-postmarketos-gs101` | Kernel: [gs101-mainline](https://github.com/m8l8th814n-eng/gs101-mainline) @ 850061c7 + patches 0005-0029 |
+| `device/testing/linux-postmarketos-gs101` | Kernel: [gs101-mainline](https://github.com/m8l8th814n-eng/gs101-mainline) @ 850061c7 + patches 0005-0030 |
 | `device/testing/firmware-google-oriole` | Firmware, **extracted at build time from Google's factory image**; nothing proprietary is in this repository |
 | `main/oriole-modem` | Modem bring-up (Shannon 5123): CP boot, RFS server, carrier config |
 | `main/oriole-sensors` | Sensors through the AoC sensor hub (USF), iio-sensor-proxy replacement, auto-brightness |

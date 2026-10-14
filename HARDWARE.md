@@ -152,9 +152,11 @@ loads this phone's calibration from persist, like the stock vibrator HAL.
 - 0001-0003: charge from PC ports, keep charging enabled at shutdown,
   report charging status to UPower.
 - 0019: sink 9 V from USB-PD chargers (as stock does), about +2.2 A.
+- 0030: real battery temperature. Firmware leaves the fuel gauge waiting
+  for the host to write the temperature (Android does); the driver now
+  lets the gauge read the battery thermistor itself.
 - Plugging a charger into the switched-off phone boots the OS; there is no
-  off-mode charging screen. The fuel gauge reports a fixed battery
-  temperature.
+  off-mode charging screen.
 
 ## Cameras
 
