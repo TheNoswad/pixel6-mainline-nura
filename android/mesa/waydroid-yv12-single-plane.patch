@@ -1,0 +1,37 @@
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
+index 7db9f6b..078b69a 100644
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
+@@ -40,6 +40,7 @@
+ #include <sys/types.h>
+ 
+ #include "util/compiler.h"
++#include "util/macros.h"
+ #include "util/libsync.h"
+ #include "util/os_file.h"
+ 
+@@ -90,6 +91,24 @@ droid_create_image_from_native_buffer(_EGLDisplay *disp,
+                                        &color_info))
+       return NULL;
+ 
++   /* Waydroid's minigbm (gbm_mesa backend) allocates YV12 as one R8 image in
++    * the standard Android YV12 layout (Y, then Cr, then Cb; chroma stride
++    * ALIGN(stride / 2, 16)) but reports a single plane through the CrOS API,
++    * which no driver can import. Derive the chroma planes from that layout.
++    */
++   if (buf_info.drm_fourcc == DRM_FORMAT_YVU420 && buf_info.num_planes == 1) {
++      int y_stride = buf_info.strides[0];
++      int c_stride = ALIGN_POT(y_stride / 2, 16);
++
++      buf_info.num_planes = 3;
++      for (int i = 1; i < 3; i++) {
++         buf_info.fds[i] = buf_info.fds[0];
++         buf_info.strides[i] = c_stride;
++      }
++      buf_info.offsets[1] = buf_info.offsets[0] + y_stride * buf->height;
++      buf_info.offsets[2] = buf_info.offsets[1] + c_stride * (buf->height / 2);
++   }
++
+    img = droid_create_image_from_buffer_info(dri2_dpy, buf->width, buf->height,
+                                              &buf_info, &color_info, priv);
+ 

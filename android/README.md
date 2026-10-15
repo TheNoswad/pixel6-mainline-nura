@@ -9,7 +9,7 @@ phone and run `install-overlay.sh` there.
 
 | Directory | What | Why |
 |---|---|---|
-| `mesa/` | Mesa (panfrost) with the gs101 Mali-G78 model, `build.sh <outdir>` | Waydroid's Mesa does not know the G78 in gs101: no hardware GL without it |
+| `mesa/` | Mesa (panfrost) with the gs101 Mali-G78 model and a YV12 import fix, `build.sh <outdir>` (applies every `*.patch`) | Waydroid's Mesa does not know the G78 in gs101: no hardware GL without it. Waydroid's minigbm reports YV12 buffers as one plane, so SurfaceFlinger aborts on apps that draw YV12 (TikTok, Discord camera switch) |
 | `gnss-hal/` | AIDL GNSS HAL reading the host's NMEA socket, `PHONE=user@phone build-hal.sh <outdir>` | GPS in Android apps (host side: bcm4776-gnssd-waydroid) |
 | `hwcomposer/` | Binary patch for Waydroid's `hwcomposer.waydroid.so` | Plasma Mobile's configure events re-hotplug the display every 1-3 s, SurfaceFlinger crashes and apps stop opening |
 

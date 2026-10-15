@@ -18,7 +18,7 @@ W=$OUT/.work; mkdir -p "$W"
 	https://archive.mesa3d.org/mesa-$MESA_VER.tar.xz
 rm -rf "$W/src"; mkdir "$W/src"
 tar -xf "$W/mesa-$MESA_VER.tar.xz" -C "$W/src" --strip-components=1
-(cd "$W/src" && git apply "$HERE/gs101-panfrost-g78-26.0.patch")
+for p in "$HERE"/*.patch; do (cd "$W/src" && git apply "$p"); done
 cat > "$W/cross.ini" <<INI
 [constants]
 ndk_path = '/ndk'
