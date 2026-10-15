@@ -1,0 +1,35 @@
+From 9e7d850c17cc31c611827af765dbf1f1d7e15d59 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 21:48:57 -0500
+Subject: [PATCH] us: Verizon: drop vzwims from the internet APNs
+
+vzwims is Verizon's IMS APN (class 1), not a data APN. Listed first
+with usage internet, it is what clients that pick the first internet
+APN for a 311480 SIM use for data (NetworkManager gsm.auto-config):
+the call fails because the modem's IMS stack already holds that PDN,
+and the device never tries vzwinternet.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ serviceproviders.xml | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/serviceproviders.xml b/serviceproviders.xml
+index 77aceff..bcd1c2c 100644
+--- a/serviceproviders.xml
++++ b/serviceproviders.xml
+@@ -13704,11 +13704,6 @@ conceived.
+ 				<destination-number>900080006200</destination-number>
+ 				<carrier-prefix>//VZWVVM</carrier-prefix>
+ 			</visual-voicemail>
+-			<apn value="vzwims">
+-				<plan type="postpaid"/>
+-				<usage type="internet"/>
+-				<name>4G LTE Contract</name>
+-			</apn>
+ 			<apn value="vzwinternet">
+ 				<plan type="postpaid"/>
+ 				<usage type="internet"/>
+-- 
+2.55.0
+

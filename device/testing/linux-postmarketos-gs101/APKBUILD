@@ -3,7 +3,7 @@
 maintainer="Ingo Reitz <9l@9lo.re>"
 pkgname=linux-postmarketos-gs101
 pkgver=7.2.0_rc3
-pkgrel=42
+pkgrel=48
 pkgdesc="Google gs101 (Pixel 6 Series) kernel, M8 gs101-mainline tree"
 arch="aarch64"
 _carch="arm64"
@@ -64,6 +64,11 @@ source="
 	0032-cs35l41dna-verify-otp-read.patch
 	0033-aoc-voice-call-mic-capture-switch.patch
 	0034-gpio-max77759-ignore-unmapped-irqs.patch
+	0035-max17042-max77759-load-battery-model.patch
+	0036-gs101-oriole-battery-models.patch
+	0037-max77759-charger-step-charging-by-temperature.patch
+	0038-gs101-oriole-step-charging.patch
+	0039-gs101-drm-seamless-refresh-rate-switch.patch
 "
 builddir="$srcdir/gs101-mainline-$_commit"
 
@@ -441,4 +446,9 @@ dff392c3c83b06ec82045e60fa0bffeca6a96ce4e42d8cdf2a1be0b99eb7d6c175df54b1b070e72c
 890bcd6dda83945ef8a1874f94017ed6cf70c5ce30860fb936b1fa706a5d53a95470db291f4f043966ddd47124d01c9bbea4e1f0383be39a201e85e5ff9aec25  0032-cs35l41dna-verify-otp-read.patch
 10dccceeb99ba452b736ae39ee6ad3263f25efe34d2400810e4ac4eab4347fb5f8a8972003da67968db8028cf9b6b412cb4e18f740456942ac5e15e6630436a5  0033-aoc-voice-call-mic-capture-switch.patch
 b6477bafba5bc6f0d5b96cde103536ae2df10ebd9e17c31a7feb2584d621f96377dd1724aeaf7ecc15e3044f14d7f343918381ed28e40283879cee13f89bc2a0  0034-gpio-max77759-ignore-unmapped-irqs.patch
+36775c956babb33aa1788ac0f04caf25c512bab8546eeff335906bc84174723eee28e3535dcf0f2d0b488a8f9a5ee0c0276d5cdcc7c9a869da14093ff8e6b998  0035-max17042-max77759-load-battery-model.patch
+ecd3349cf9074466e495c074ddd3270092eced772c573b742cc5d20a3b398ffef78add0c240155e5c218e7b8d07ee5e088c8d50a5432c096899b19dfce13e5a4  0036-gs101-oriole-battery-models.patch
+7813a4aab7bd27aed8058ff51b55f208e8d34b96e47e1ba49fde241e96dc2b1ef80b078eb94e3bd4f947e98a53da416de5bcb73461a5567c389a2b634371d6e5  0037-max77759-charger-step-charging-by-temperature.patch
+368959e35a52f0574a72eb714eeb2991a394f174f1a27d7a70a954166038e6edf79ca2ba67c5cb35934b50d7f8b57aae8289c188fb5488a4c1e54eab22982917  0038-gs101-oriole-step-charging.patch
+47100e3c9dff21681ae25363a4fc07ff5b63d7f36c06c18d587430c8b5e3b50ba45ca2e1cbdbb15c97ce1becefda80c5d13635d7d801e3768aaa7a17ec979094  0039-gs101-drm-seamless-refresh-rate-switch.patch
 "

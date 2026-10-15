@@ -2,12 +2,14 @@ maintainer="Ingo Reitz <9l@9lo.re>"
 pkgname=device-google-oriole
 pkgdesc="Google Pixel 6"
 pkgver=6
-pkgrel=46
+pkgrel=48
 url="https://postmarketos.org"
 license="MIT"
 arch="aarch64"
 options="!check !archcheck"
 depends="
+	pipewire-echo-cancel
+	pipewire-webrtc
 	alsa-utils
 	aoc-voiced
 	android-tools
@@ -59,6 +61,8 @@ source="
 	oriole-pulse-speaker
 	oriole-pulse-speaker.service
 	90-oriole-aoc.wireplumber.conf
+	90-oriole-bluetooth.wireplumber.conf
+	90-oriole-echo-cancel.conf
 	90-oriole-flatpak-gl.conf
 	oriole-cpufreq-ratelimit.service
 	90-oriole-sched.conf
@@ -184,6 +188,10 @@ package() {
 		"$pkgdir"/usr/lib/systemd/user/default.target.wants/
 	install -Dm644 "$srcdir"/90-oriole-aoc.wireplumber.conf \
 		"$pkgdir"/usr/share/wireplumber/wireplumber.conf.d/90-oriole-aoc.conf
+	install -Dm644 "$srcdir"/90-oriole-bluetooth.wireplumber.conf \
+		"$pkgdir"/usr/share/wireplumber/wireplumber.conf.d/90-oriole-bluetooth.conf
+	install -Dm644 "$srcdir"/90-oriole-echo-cancel.conf \
+		"$pkgdir"/usr/share/pipewire/pipewire.conf.d/90-oriole-echo-cancel.conf
 	# ALSA UCM: media (HiFi) and calls (Voice Call, switched by callaudiod);
 	# PipeWire prefers it over the ACP profile set above, which stays as the
 	# fallback
@@ -232,6 +240,8 @@ bac2df8dee70f0247c1031d56cb97b793f03ff953fe6c3eee70d17d662a534fc5875c8aa03882d40
 eb5e5127dcce78de58778ef48b6b57e9f5a7edd859e82ac353f9e675ddbf42b8a4c668efca3c54aff1eb97674f12f5ad3feaadb4216245d55f61661268c55774  oriole-pulse-speaker
 204e8b080ccf157ad6851ff5a342bb81f8c0c3b535036dbc367cd665e4fba111a925826266587352197d7b23ecab657146535af06268db199487c5cd7f324355  oriole-pulse-speaker.service
 d71de9159d99532aea2e00f5dc5f31da3ee8721edb51c881eb473ce9ea3037783d7b49ac5aed6ccceafa05436c626f1698394ae12e4cddd63b8f61513b92d9ab  90-oriole-aoc.wireplumber.conf
+b4de906dc1293070c6bd87b7e60f1895eb7a2ec4161c361f6193937122b2b5bde484b8d6a9a534766539d3ccb86520d6747996c0bffda2ea2d261ac7814a0d2e  90-oriole-bluetooth.wireplumber.conf
+9ee967bd90c52fa665bfb1fbb7b6a9e529ec352e035c574a8bb24341bbae3399a65d86fff88996d2388e48b96a605d4df8202a71bf97c5b1e1c4aeb7f2dce7a5  90-oriole-echo-cancel.conf
 7e280f5ba0ad0df469251deb3a01e7b76d79dcd8432481a12ffd14ee02599d0567b23e761c4f391c7386c8b932677d6de194b4b474e52d2b80bd746c5ca753bf  90-oriole-flatpak-gl.conf
 10b1da32525ff148389f8f46224d93e57a4f184a3fe363734065320377bdaa289dbb11fa02a6f2fa8d47758d67ba9dfab543933148ff873143fe2872d4bfa3fd  oriole-cpufreq-ratelimit.service
 a5a6b075da82fd7cc4ee4971dc8d5558c4449573d1bcd54c2bbba8e6392e16669705c4430833a2888c7b31735ae1990d0d946457144ce874d58042c4a00874ca  90-oriole-sched.conf

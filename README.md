@@ -30,7 +30,8 @@ about backups and the bootloader.
 ## Status
 
 Tested on one Pixel 6 (stock build CP1A.260405.005) with both Phosh and
-Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
+Plasma Mobile, on Verizon (US Mobile SIM) and earlier on T-Mobile US (Mint
+Mobile SIM).
 
 | Works | Notes |
 |---|---|
@@ -38,8 +39,9 @@ Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
 | Wi-Fi | Firmware hangs now restart the interface (fix still in long-term testing) |
 | Bluetooth | A2DP and HFP (headset calls) |
 | Speakers, earpiece, microphones | With the stock speaker protection and this phone's calibration |
-| Mobile data, SMS, MMS, VoLTE calls | **T-Mobile US and its MVNOs only** for now, see below |
-| Charging | USB-PD up to 9 V. Plugging in a powered-off phone boots it (no off-mode charging screen) |
+| Mobile data, SMS, MMS, VoLTE calls | Carrier picked from the SIM. Tested: Verizon (data, SMS over IMS) and T-Mobile US (all, before the SMS-over-IMS change), see below |
+| Charging | USB-PD up to 9 V, up to 3.0 A with Google's temperature step charging. Plugging in a powered-off phone boots it (no off-mode charging screen) |
+| 90 Hz display | Default; switches without a modeset |
 | GPS | Own driver, no Broadcom userspace; every fix is a cold start (~40 s outdoors) |
 | Sensors | Orientation, ambient light (auto-brightness), compass |
 | Haptics | Calibrated per phone from the persist partition |
@@ -50,10 +52,11 @@ Plasma Mobile, on a T-Mobile US network (Mint Mobile SIM).
 
 **Known problems and missing features**
 
-- **Carrier:** the modem is configured for T-Mobile US
-  (`/etc/ModemManager/shannon.conf`, attach APN "Wholesale"). Other carriers
-  need their own values and are untested; choosing the configuration from
-  the SIM is not implemented.
+- **Carrier:** the modem's carrier configuration is picked from the SIM
+  with the modem image's own carrier database. Only Verizon and T-Mobile US
+  have been tried; other carriers may need a per-carrier setting in
+  `/etc/ModemManager/shannon.conf` (Verizon needs its IMS APN there).
+  On Verizon the first registration after boot takes about a minute.
 - **Emergency calls are untested. Do not rely on this phone for them.**
 - Calls only work about 2.5-3 minutes after boot (the first IMS
   registration always fails and retries).

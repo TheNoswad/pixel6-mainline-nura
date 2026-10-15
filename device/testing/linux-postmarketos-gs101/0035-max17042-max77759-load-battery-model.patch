@@ -1,0 +1,363 @@
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Subject: [PATCH] power: supply: max17042: load MAX77759 battery model from DT
+
+After a power-on reset the MAX77759 fuel gauge runs Maxim's generic EZ
+model (DesignCap 3000 mAh, 175 ms task period), so on Pixel 6 with its
+4524 mAh pack the reported capacity, SOC and empty point are all off.
+Android's max_m5 driver loads a per-pack model; nothing in Linux does.
+
+Add the same sequence here: when Status.POR is set and the DT has a model
+child whose maxim,battery-id matches the "battery-id" nvmem cell (the pack
+EEPROM), write the 48-word characterization table, the cell parameters
+(maxim,fg-params, in Maxim INI order, as in Google's DT), trigger
+Config2.LdMdl and re-run the parameters if FullCapRep/FullCapNom end up
+inconsistent. Mainline already scales capacity by TaskPeriod.
+
+Sequence and data from Google's GPL raviole kernel (google-modules/bms
+max_m5.c), provided by M8.
+---
+diff --git a/drivers/power/supply/max17042_battery.c b/drivers/power/supply/max17042_battery.c
+index 61d447f..240534f 100644
+--- a/drivers/power/supply/max17042_battery.c
++++ b/drivers/power/supply/max17042_battery.c
+@@ -20,6 +20,7 @@
+ #include <linux/pm.h>
+ #include <linux/power_supply.h>
+ #include <linux/power/max17042_battery.h>
++#include <linux/nvmem-consumer.h>
+ #include <linux/of.h>
+ #include <linux/regmap.h>
+ 
+@@ -40,6 +41,12 @@
+ #define CFG_ALRT_BIT_ENBL	(1 << 2)
+ #define CFG_TEX_BIT		(1 << 8)
+ #define CFG2_DSOCI_BIT_ENBL	(1 << 7)
++#define CFG2_LDMDL_BIT		(1 << 5)
++#define FSTAT_DNR_BIT		(1 << 0)
++
++#define MAX77759_MODEL_WORDS	48
++#define MAX77759_CGAIN_DEFAULT	0x0400
++#define MAX77759_LOAD_RETRIES	3
+ 
+ #define VFSOC0_LOCK		0x0000
+ #define VFSOC0_UNLOCK		0x0080
+@@ -63,12 +70,52 @@
+ #define MAX17042_RESISTANCE_LSB		1 / 4096 /* Ω */
+ #define MAX17042_TEMPERATURE_LSB	1 / 256 /* °C */
+ 
++/*
++ * Cell parameters of a MAX77759 battery model, in the order of Maxim's
++ * model INI files (and of the "maxim,fg-params" DT property).
++ */
++struct max77759_model_params {
++	u16 iavg_empty;
++	u16 relaxcfg;
++	u16 learncfg;
++	u16 config;
++	u16 config2;
++	u16 fullsocthr;
++	u16 fullcaprep;
++	u16 designcap;
++	u16 dpacc;
++	u16 dqacc;
++	u16 fullcapnom;
++	u16 v_empty;
++	u16 qrtable00;
++	u16 qrtable10;
++	u16 qrtable20;
++	u16 qrtable30;
++	u16 rcomp0;
++	u16 tempco;
++	u16 ichgterm;
++	u16 tgain;
++	u16 toff;
++	u16 curve;
++	u16 misccfg;
++	u16 atrate;
++	u16 convgcfg;
++	u16 filtercfg;
++	u16 taskperiod;
++};
++
++struct max77759_model {
++	u16 table[MAX77759_MODEL_WORDS];
++	struct max77759_model_params params;
++};
++
+ struct max17042_chip {
+ 	struct device *dev;
+ 	struct regmap *regmap;
+ 	struct power_supply *battery;
+ 	enum max170xx_chip_type chip_type;
+ 	struct max17042_config_data *config_data;
++	struct max77759_model *model;
+ 	struct work_struct work;
+ 	int    init_complete;
+ 	int    irq;
+@@ -988,6 +1035,182 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
+ 	return IRQ_HANDLED;
+ }
+ 
++static int max77759_write_model_table(struct max17042_chip *chip)
++{
++	struct regmap *map = chip->regmap;
++	u16 data[MAX77759_MODEL_WORDS];
++	int ret, i;
++
++	max17042_unlock_model(chip);
++	ret = regmap_bulk_write(map, MAX17042_MODELChrTbl, chip->model->table,
++				MAX77759_MODEL_WORDS);
++	if (!ret)
++		ret = regmap_bulk_read(map, MAX17042_MODELChrTbl, data,
++				       MAX77759_MODEL_WORDS);
++	if (!ret && memcmp(data, chip->model->table, sizeof(data)))
++		ret = -EIO;
++	max17042_lock_model(chip);
++	if (ret)
++		return ret;
++
++	/* A locked model table reads back as all ones */
++	ret = regmap_bulk_read(map, MAX17042_MODELChrTbl, data,
++			       MAX77759_MODEL_WORDS);
++	if (ret)
++		return ret;
++	for (i = 0; i < MAX77759_MODEL_WORDS; i++)
++		if (data[i] != 0xffff)
++			return -EIO;
++
++	return 0;
++}
++
++static int max77759_write_model_params(struct max17042_chip *chip)
++{
++	const struct max77759_model_params *p = &chip->model->params;
++	struct regmap *map = chip->regmap;
++	const struct {
++		u8 reg;
++		u16 val;
++	} regs[] = {
++		{ MAX17042_RepCap,	0 },
++		{ MAX17042_RelaxCFG,	p->relaxcfg },
++	}, extra[] = {
++		{ MAX17042_LearnCFG,	p->learncfg },
++		{ MAX17042_CONFIG,	p->config },
++		{ MAX17055_Config2,	p->config2 },
++		{ MAX17047_FullSOCThr,	p->fullsocthr },
++		{ MAX17042_FullCAP0,	p->fullcaprep },	/* FullCapRep */
++		{ MAX17042_DesignCap,	p->designcap },
++		{ MAX17042_dPacc,	p->dpacc },
++		{ MAX17042_dQacc,	p->dqacc },
++		{ MAX17042_FullCAPNom,	p->fullcapnom },
++		{ MAX17047_V_empty,	p->v_empty },
++		{ MAX17047_QRTbl00,	p->qrtable00 },
++		{ MAX17047_QRTbl10,	p->qrtable10 },
++		{ MAX17047_QRTbl20,	p->qrtable20 },
++		{ MAX17047_QRTbl30,	p->qrtable30 },
++		{ MAX17042_RCOMP0,	p->rcomp0 },
++		{ MAX17042_TempCo,	p->tempco },
++		{ MAX17042_TaskPeriod,	p->taskperiod },
++		{ MAX17042_ICHGTerm,	p->ichgterm },
++		{ MAX17042_TGAIN,	p->tgain },
++		{ MAX17042_TOFF,	p->toff },
++		{ MAX17042_MiscCFG,	p->misccfg },
++		{ MAX17042_AtRate,	p->atrate },
++		{ MAX17055_CVMixCap,	p->fullcapnom * 3 / 4 },
++		{ MAX17055_CVHalfTime,	0x0600 },
++		{ MAX17055_ConvgCfg,	p->convgcfg },
++	};
++	unsigned int vfsoc;
++	int ret = 0, i;
++
++	for (i = 0; i < ARRAY_SIZE(regs) && !ret; i++)
++		ret = regmap_write(map, regs[i].reg, regs[i].val);
++	if (ret)
++		return ret;
++
++	/* The rest of the cell parameters sit behind the VFSOC0 lock */
++	ret = regmap_write(map, MAX17042_VFSOC0Enable, VFSOC0_UNLOCK);
++	if (!ret)
++		ret = regmap_read(map, MAX17042_VFSOC, &vfsoc);
++	if (!ret)
++		ret = regmap_write(map, MAX17042_VFSOC0, vfsoc);
++	for (i = 0; i < ARRAY_SIZE(extra) && !ret; i++)
++		ret = regmap_write(map, extra[i].reg, extra[i].val);
++	regmap_write(map, MAX17042_VFSOC0Enable, VFSOC0_LOCK);
++	if (ret)
++		return ret;
++
++	ret = regmap_write(map, MAX17055_Curve, p->curve);
++	if (!ret)
++		ret = regmap_write(map, MAX17042_FilterCFG, p->filtercfg);
++	if (!ret)
++		ret = regmap_write(map, MAX17042_CGAIN, MAX77759_CGAIN_DEFAULT);
++
++	return ret;
++}
++
++/*
++ * Load a custom battery model into a MAX77759 fuel gauge after it lost power,
++ * following the sequence of Maxim's model loading guide as used by Google's
++ * max_m5 driver.
++ */
++static int max77759_load_model(struct max17042_chip *chip)
++{
++	const struct max77759_model_params *p = &chip->model->params;
++	struct regmap *map = chip->regmap;
++	unsigned int val, nom, rep;
++	int ret, retry, i;
++
++	for (i = 0; i < 20; i++) {
++		ret = regmap_read(map, MAX17042_FSTAT, &val);
++		if (ret)
++			return ret;
++		if (!(val & FSTAT_DNR_BIT))
++			break;
++		msleep(50);
++	}
++
++	ret = regmap_read(map, MAX17055_Config2, &val);
++	if (ret)
++		return ret;
++	if (val & CFG2_LDMDL_BIT)
++		return -EBUSY;
++
++	ret = max77759_write_model_table(chip);
++	if (ret)
++		return ret;
++
++	for (retry = 0; retry < MAX77759_LOAD_RETRIES; retry++) {
++		msleep(500);
++
++		ret = max77759_write_model_params(chip);
++		if (ret)
++			return ret;
++
++		ret = regmap_set_bits(map, MAX17055_Config2, CFG2_LDMDL_BIT);
++		if (ret)
++			return ret;
++
++		/* The gauge clears LdMdl when done, usually within 400 ms */
++		for (i = 0; i < 20; i++) {
++			msleep(50);
++			ret = regmap_read(map, MAX17055_Config2, &val);
++			if (ret)
++				return ret;
++			if (val & CFG2_LDMDL_BIT)
++				continue;
++			ret = regmap_read(map, MAX17042_RepCap, &val);
++			if (ret)
++				return ret;
++			if (val)
++				break;
++		}
++		if (i == 20)
++			return -ETIMEDOUT;
++
++		/*
++		 * The gauge sometimes recomputes FullCapRep and FullCapNom too
++		 * far apart; reload the parameters until they make sense.
++		 */
++		ret = regmap_read(map, MAX17042_FullCAP0, &rep);
++		if (!ret)
++			ret = regmap_read(map, MAX17042_FullCAPNom, &nom);
++		if (ret)
++			return ret;
++		if (abs((int)nom - (int)rep) <=
++		    abs(p->fullcapnom - p->fullcaprep) + p->designcap / 100)
++			break;
++
++		dev_warn(chip->dev, "model load: FullCapNom %#x FullCapRep %#x, retrying\n",
++			 nom, rep);
++	}
++
++	chip->task_period = p->taskperiod;
++	return 0;
++}
++
+ static void max17042_init_worker(struct work_struct *work)
+ {
+ 	struct max17042_chip *chip = container_of(work,
+@@ -1001,10 +1224,73 @@ static void max17042_init_worker(struct work_struct *work)
+ 			return;
+ 	}
+ 
++	if (chip->model) {
++		ret = max77759_load_model(chip);
++		if (ret) {
++			dev_err(chip->dev, "failed to load battery model: %d\n",
++				ret);
++		} else {
++			regmap_clear_bits(chip->regmap, MAX17042_STATUS,
++					  STATUS_POR_BIT);
++			dev_info(chip->dev, "loaded battery model\n");
++		}
++	}
++
+ 	chip->init_complete = 1;
+ }
+ 
+ #ifdef CONFIG_OF
++/*
++ * Battery packs from different cell vendors need different models. Pick the
++ * model child node whose maxim,battery-id matches the "battery-id" nvmem cell,
++ * which usually lives in the pack EEPROM.
++ */
++static int max77759_parse_model(struct max17042_chip *chip)
++{
++	struct device *dev = chip->dev;
++	struct max77759_model *model;
++	u32 child_id;
++	u8 id;
++	int ret;
++
++	ret = nvmem_cell_read_u8(dev, "battery-id", &id);
++	if (ret == -EPROBE_DEFER)
++		return ret;
++	if (ret) {
++		if (ret != -ENOENT)
++			dev_warn(dev, "cannot read battery id: %d\n", ret);
++		return 0;
++	}
++
++	for_each_available_child_of_node_scoped(dev->of_node, child) {
++		if (of_property_read_u32(child, "maxim,battery-id", &child_id) ||
++		    child_id != id)
++			continue;
++
++		model = devm_kzalloc(dev, sizeof(*model), GFP_KERNEL);
++		if (!model)
++			return -ENOMEM;
++
++		ret = of_property_read_u16_array(child, "maxim,fg-model",
++						 model->table,
++						 MAX77759_MODEL_WORDS);
++		if (!ret)
++			ret = of_property_read_u16_array(child, "maxim,fg-params",
++					(u16 *)&model->params,
++					sizeof(model->params) / sizeof(u16));
++		if (ret)
++			return dev_err_probe(dev, ret, "invalid model %pOFn\n",
++					     child);
++
++		dev_dbg(dev, "battery id %u: using model %pOFn\n", id, child);
++		chip->model = model;
++		return 0;
++	}
++
++	dev_warn(dev, "no model for battery id %u\n", id);
++	return 0;
++}
++
+ static int max17042_parse_dt(struct max17042_chip *chip)
+ {
+ 	struct device_node *np = chip->dev->of_node;
+@@ -1032,6 +1318,9 @@ static int max17042_parse_dt(struct max17042_chip *chip)
+ 	if (of_property_read_s32(np, "maxim,over-volt", &chip->vmax))
+ 		chip->vmax = INT_MAX;
+ 
++	if (chip->chip_type == MAXIM_DEVICE_TYPE_MAX77759)
++		return max77759_parse_model(chip);
++
+ 	return 0;
+ }
+ #endif

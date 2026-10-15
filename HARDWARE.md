@@ -37,6 +37,9 @@ G78 model). Patch 0008 drives the GPU clock through ACPM so it scales
 power-up after cpufreq: when the two raced at boot, about half the boots
 came up without a display.
 
+Patch 0039 makes a refresh-rate-only mode change seamless (no full
+modeset), as the vendor panel driver does; 90 Hz is the default mode.
+
 Flatpak apps need an `org.freedesktop.Platform.GL.oriole` extension built
 with the same Mesa patch for each runtime branch (the device package sets
 `FLATPAK_GL_DRIVERS=oriole`). That extension is not part of this
@@ -93,7 +96,8 @@ address on every phone, so 0018 marks that address invalid and `bootmac`
 (patched in `main/bootmac`) sets the phone's real address from the
 bootloader. A2DP and HFP work. `postmarketos-base-ui` is patched so
 audio follows a newly connected headset and so only the active session's
-WirePlumber registers the HFP profiles.
+WirePlumber registers the HFP profiles. LC3 for HFP is off: on this SCO
+path it produced pops and loud noise; mSBC is clean.
 
 ## Audio
 
@@ -104,6 +108,8 @@ package applies the phone's speaker calibration from persist and ships the
 ALSA UCM configuration (HiFi and Voice Call). 0032 reads the amplifiers'
 OTP trim over SPI in small PIO transfers and checks it: the gs101 SPI
 DMA path corrupted the read, and the bad trim made the speakers distort.
+The device package adds PipeWire's echo canceller on the built-in speaker
+and microphone (VoIP apps had none).
 
 ## Modem (Samsung Shannon 5123 on PCIe)
 
@@ -116,14 +122,25 @@ DMA path corrupted the read, and the bad trim made the speakers distort.
   and efs partitions; writes go to a copy in `/var/lib/oriole-modem`.
 - `temp/modemmanager` adds a Shannon plugin speaking the modem's SIT
   protocol: registration, data, SMS and IMS for VoLTE calls.
+- Carrier: the plugin reads the SIM (IMSI, GID1, ICCID) and matches it
+  against the modem image's carrier database (`confpack/cfg.db`) like the
+  stock RIL, then tells the modem which carrier configuration to load.
+  Per-carrier extras live in `shannon.conf` (`[carrier:<name>]`).
+- Verizon needs three things T-Mobile does not: its IMS APN (`VZWIMS`) in
+  the modem's APN table before it attaches, data calls in the newer
+  request format (the old one fails with `MATCH_ALL_RULE_NOT_ALLOWED`),
+  and SMS over IMS (there is no circuit-switched path). SMS goes through
+  the modem's IMS stack whenever IMS is registered.
 - Call audio: `aoc-voiced` keeps the AoC voice path open during a call;
   `temp/callaudiod` switches the routing.
 - MMS: `temp/mmsd-tng` and `temp/mobile-broadband-provider-info` fix APN
-  matching for T-Mobile MVNOs.
+  matching for T-Mobile MVNOs; the provider database patch also stops
+  offering Verizon's IMS APN as a data APN.
 
-Open: carrier settings are hardcoded for T-Mobile US
-(`/etc/ModemManager/shannon.conf`); calls only work 2.5-3 minutes after
-boot; emergency calls are untested.
+Open: only Verizon and T-Mobile US tested; on Verizon the first
+registration after boot takes about a minute (a radio cycle recovers the
+modem); calls only work 2.5-3 minutes after boot; emergency calls are
+untested.
 
 ## GNSS (BCM4775/4776 on SPI)
 
@@ -157,6 +174,10 @@ loads this phone's calibration from persist, like the stock vibrator HAL.
 - 0030: real battery temperature. Firmware leaves the fuel gauge waiting
   for the host to write the temperature (Android does); the driver now
   lets the gauge read the battery thermistor itself.
+- 0035/0036: load Google's per-pack battery model into the fuel gauge
+  (picked by the pack's battery ID), as Google's GPL kernel does.
+- 0037/0038: Google's temperature/voltage step charging table; no charging
+  outside 0-55 C. With it the charge current cap is 3.0 A.
 - Plugging a charger into the switched-off phone boots the OS; there is no
   off-mode charging screen.
 
@@ -189,4 +210,4 @@ options, the iptables modules (device package), the GNSS socket bind mount
 ## Not working
 
 Double-tap to wake (the touch driver has no gesture mode), deep
-suspend, the rear main camera, GPS warm start, carrier detection from the SIM.
+suspend, the rear main camera, GPS warm start.

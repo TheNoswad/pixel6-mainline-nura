@@ -8,7 +8,7 @@ maintainer="Achill Gilgenast <achill@achill.org>"
 pkgname=modemmanager
 _pkgver=1.25.95_git20261005
 pkgver=9999$_pkgver
-pkgrel=8
+pkgrel=14
 _commit=7f0bf17ab518cd78925cf7e53cc0d5c42f88b41a
 pkgdesc="ModemManager library"
 url="https://www.freedesktop.org/wiki/Software/ModemManager"
@@ -35,6 +35,7 @@ makedepends="
 	linux-headers
 	meson
 	polkit-dev
+	sqlite-dev
 	vala
 	"
 checkdepends="dbus glib-dev py3-gobject3 py3-dbus"
@@ -110,5 +111,5 @@ e049eecc104c989f516402ca7c21e3374c152e3840cf05c34ac91bc8e3305c83b53693bc0964f657
 6e234cebcdec6d1afbca164ee5c13c96f7132ef31231d5c043cc5750ebe99e362a384d0463874b3c1c30799b433e0d3286add03af13c97fa406b4b5d2b78880c  modemmanager.initd
 f06e9b89acab5b61c5965658d62551b0f168066384674f7c4dd56feb6f811c82c640470e634e32d8c4ef62290588cf974aa5f213e5c67e797a06d33e61fa24ec  0001-intel-XMM7360-fix-big-endian-handling-of-ASN-integer.patch
 999fa71ade470d1859cb5d162566f5f4132d14d2c57a612dc1732db40a1ec76788ea8b446658781f484c282afb95f6fcdfcdeb5e8a4a23e13d2c3e79ed6768fa  0002-core-sit-port-type.patch
-62ece989dcbb4918b8f6aeda3cd0e36ff01d2cd5c6b8a404e2134935f43eaf9d2f64d91d968086b3a312006275694d7fe4496f6351e45c6ce75c0d29d559e8d7  0003-plugin-shannon.patch
+fd0b0768b074612d2123fd92d44675edefe06267c0f492790deaae83989bf616e9504724bde62f60d8c0274e2b26fcbd8980b1fc5328d9988d55fb1c02596b2e  0003-plugin-shannon.patch
 "

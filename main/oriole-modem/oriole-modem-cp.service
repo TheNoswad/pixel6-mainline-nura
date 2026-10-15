@@ -3,6 +3,9 @@
 Description=Pixel 6 modem CP boot (tinycbd)
 Requires=oriole-modem-rfsd.service
 After=oriole-modem-rfsd.service systemd-tmpfiles-setup.service
+# Stop ModemManager before powering the CP off: stopped in parallel, its
+# shutdown commands got no answer and it sat out its 90 s stop timeout
+Before=ModemManager.service
 RequiresMountsFor=/run/oriole/modem /run/oriole/efs /run/oriole/modem_userdata /run/oriole/persist
 
 [Service]

@@ -32,10 +32,22 @@ index 1aa0a45e..57be9d44 100644
  option('plugin_sierra', type: 'feature', value: 'auto', description: 'enable sierra plugin support')
  option('plugin_simtech', type: 'feature', value: 'auto', description: 'enable simtech plugin support')
 diff --git a/src/plugins/meson.build b/src/plugins/meson.build
-index 5a79bb16..0af8880d 100644
+index 5a79bb16..67d8c733 100644
 --- a/src/plugins/meson.build
 +++ b/src/plugins/meson.build
-@@ -887,6 +887,28 @@ if plugins_options['qcom-soc']
+@@ -66,6 +66,11 @@ if enable_qmi
+   plugins_deps += qmi_glib_dep
+ endif
+ 
++# shannon: carrier selection reads the modem image's confpack cfg.db
++if plugins_options['shannon']
++  plugins_deps += dependency('sqlite3')
++endif
++
+ # common Fibocom support library
+ if plugins_shared['fibocom']
+   fibocom_inc = include_directories('fibocom')
+@@ -887,6 +892,29 @@ if plugins_options['qcom-soc']
    plugins_udev_rules += files('qcom-soc/77-mm-qcom-soc.rules')
  endif
  
@@ -47,6 +59,7 @@ index 5a79bb16..0af8880d 100644
 +    'shannon/mm-call-shannon.c',
 +    'shannon/mm-plugin-shannon.c',
 +    'shannon/mm-port-sit.c',
++    'shannon/mm-shannon-carrier.c',
 +    'shannon/mm-shannon-ims.c',
 +    'shannon/mm-sim-shannon.c',
 +    'shannon/mm-sms-shannon.c',
@@ -127,7 +140,7 @@ index 00000000..c56b35aa
 +LABEL="mm_shannon_end"
 diff --git a/src/plugins/shannon/mm-bearer-shannon.c b/src/plugins/shannon/mm-bearer-shannon.c
 new file mode 100644
-index 00000000..a34fa9bd
+index 00000000..88431eb8
 --- /dev/null
 +++ b/src/plugins/shannon/mm-bearer-shannon.c
 @@ -0,0 +1,488 @@
@@ -421,7 +434,7 @@ index 00000000..a34fa9bd
 +
 +    mm_obj_info (self, "setting up data call: APN '%s', pdp type %u, cid %u",
 +                 ctx->apn ? ctx->apn : "", ctx->pdp, self->priv->cid);
-+    req = mm_broadband_modem_shannon_build_apn_payload (0xf6, self->priv->cid, ctx->apn, ctx->pdp);
++    req = mm_broadband_modem_shannon_build_setup_data_call (self->priv->cid, ctx->apn, ctx->pdp, 0, 0);
 +    mm_broadband_modem_shannon_command (modem, SIT_SETUP_DATA_CALL, req->data, req->len, 40,
 +                                        (GAsyncReadyCallback) setup_ready, task);
 +}
@@ -669,10 +682,10 @@ index 00000000..fbe34685
 +#endif /* MM_BEARER_SHANNON_H */
 diff --git a/src/plugins/shannon/mm-broadband-modem-shannon.c b/src/plugins/shannon/mm-broadband-modem-shannon.c
 new file mode 100644
-index 00000000..4d1412ff
+index 00000000..e5cfbb8a
 --- /dev/null
 +++ b/src/plugins/shannon/mm-broadband-modem-shannon.c
-@@ -0,0 +1,2807 @@
+@@ -0,0 +1,3072 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * Samsung Shannon modem driven over SIT (cpif), Google Pixel 6 (local plugin).
@@ -685,16 +698,22 @@ index 00000000..4d1412ff
 + * port: every MMBroadbandModem AT default is either overridden here or
 + * disabled.
 + *
-+ * Optional settings: /etc/ModemManager/shannon.conf
++ * Carrier config: a freshly booted CP (radio off) gets SET_CP_CARRIER_CONFIG
++ * during initialization; the CP reads the confpack over RFS (modem-rfsd) and
++ * answers with IND 0x4601. The manifest is picked from the SIM (IMSI, GID1,
++ * ICCID) with the confpack's own cfg.db, see mm-shannon-carrier.c; without
++ * a readable SIM (absent, PIN locked) the CP keeps its default config.
++ *
++ * Optional settings (overrides): /etc/ModemManager/shannon.conf
 + *   [attach]
-+ *   apn=Wholesale
++ *   apn=                  (initial EPS bearer; default empty = network's)
 + *   ip-type=ipv4v6        (ipv4, ipv6 or ipv4v6)
 + *   [carrier]
 + *   manifest=<confman sha1 from confpack/cfg.db confmap, 40 hex digits>
 + *   path=/mnt/vendor/modem_img/images/default/confpack   (as the CP sees it)
-+ * With [carrier] set, a freshly booted CP (radio off) gets
-+ * SET_CP_CARRIER_CONFIG during initialization; the CP reads the confpack
-+ * over RFS (modem-rfsd) and answers with IND 0x4601.
++ *   db=/run/oriole/modem/images/default/confpack/cfg.db  (as the AP sees it)
++ *   [carrier:<confpack entry name, e.g. us_vzw>]
++ *   ims-apn=VZWIMS        (per-carrier [ims] apn for the APN table)
 + *   [sms]
 + *   domain=0              (SEND_SMS domain byte, 0-3; 0 = auto)
 + *   [ims]
@@ -723,6 +742,7 @@ index 00000000..4d1412ff
 +#include "mm-call-shannon.h"
 +#include "mm-sit-helpers.h"
 +#include "mm-shannon-ims.h"
++#include "mm-shannon-carrier.h"
 +
 +#define SHANNON_CONF "/etc/ModemManager/shannon.conf"
 +/* created by modem-cp.service after each CP boot */
@@ -737,6 +757,9 @@ index 00000000..4d1412ff
 +/* cid used for the attach APN and the default bearer (must be >= 1) */
 +#define SHANNON_DEFAULT_CID 1
 +#define SHANNON_DEFAULT_CONFPACK "/mnt/vendor/modem_img/images/default/confpack"
++#define SHANNON_DEFAULT_CARRIER_DB "/run/oriole/modem/images/default/confpack/cfg.db"
++/* seconds to wait for a readable SIM before the carrier config */
++#define CARRIER_SIM_WAIT_ATTEMPTS 45
 +
 +static void iface_modem_init      (MMIfaceModemInterface     *iface);
 +static void iface_modem_3gpp_init (MMIfaceModem3gppInterface *iface);
@@ -767,9 +790,13 @@ index 00000000..4d1412ff
 +
 +    gchar     *attach_apn;
 +    guint8     attach_pdp;
++    gchar     *ims_apn;      /* data profile with the IMS + IA types */
++    gchar     *carrier_name; /* confpack entry picked for this CP boot */
 +
-+    GByteArray *carrier_manifest;   /* raw sha1, NULL if not configured */
++    GByteArray *carrier_manifest;   /* raw sha1: override or detected */
 +    gchar      *carrier_path;
++    gchar      *carrier_db;
++    guint       carrier_sim_attempts;
 +    GTask      *carrier_task;       /* waiting for IND 0x4601 */
 +    guint       carrier_timeout_id;
 +
@@ -895,6 +922,39 @@ index 00000000..4d1412ff
 +    return a;
 +}
 +
++/* SETUP_DATA_CALL v2 (0x27e B frame, request version 1 at 0xf5) with
++ * matchAllRuleAllowed and a DNN traffic descriptor: the v1 frame (0xf6 B)
++ * or matchAllRuleAllowed 0 fails with 2253 MATCH_ALL_RULE_NOT_ALLOWED on
++ * carrier configs that enforce URSP rules (Verizon; IMS on any carrier) */
++#define SIT_SETUP_DATA_CALL_V2_LEN 0x27e
++
++GByteArray *
++mm_broadband_modem_shannon_build_setup_data_call (guint8       cid,
++                                                  const gchar *apn,
++                                                  guint8       pdp_type,
++                                                  guint8       apn_type,
++                                                  guint8       pcscf_type)
++{
++    GByteArray *req;
++    guint8     *f;
++    gsize       apn_len = apn ? MIN (strlen (apn), 100) : 0;
++
++    req = mm_broadband_modem_shannon_build_apn_payload (SIT_SETUP_DATA_CALL_V2_LEN, cid, apn, pdp_type);
++    /* frame offsets below */
++    f = req->data - SIT_RSP_HDR_LEN;
++    f[0x0f] = apn_type;
++    f[0xdb] = pcscf_type;
++    f[0xf5] = 1;                         /* request version 1 = v2 */
++    memset (f + 0xf6, 0, 4);             /* (build_apn_payload puts the attach pdp at 0xf8) */
++    memset (f + 0xfc, 0xff, 4);          /* no slice SD */
++    memset (f + 0x101, 0xff, 4);
++    f[0x105] = 1;                        /* matchAllRuleAllowed */
++    f[0x106] = 2;                        /* traffic descriptor: DNN */
++    if (apn_len)
++        memcpy (f + 0x10a, apn, apn_len);
++    return req;
++}
++
 +guint8
 +mm_broadband_modem_shannon_pdp_type_from_ip_family (MMBearerIpFamily family)
 +{
@@ -915,6 +975,23 @@ index 00000000..4d1412ff
 +    }
 +}
 +
++static gboolean
++set_carrier_manifest (MMBroadbandModemShannon *self,
++                      const gchar             *hex)
++{
++    gsize   bin_len = 0;
++    guint8 *bin;
++
++    bin = mm_utils_hexstr2bin (hex, -1, &bin_len, NULL);
++    if (!bin || bin_len == 0 || bin_len > 256) {
++        g_free (bin);
++        return FALSE;
++    }
++    g_clear_pointer (&self->priv->carrier_manifest, g_byte_array_unref);
++    self->priv->carrier_manifest = g_byte_array_new_take (bin, bin_len);
++    return TRUE;
++}
++
 +static void
 +load_settings (MMBroadbandModemShannon *self)
 +{
@@ -924,12 +1001,18 @@ index 00000000..4d1412ff
 +
 +    self->priv->attach_pdp = SIT_PDP_IPV4V6;
 +    g_clear_pointer (&self->priv->ims, mm_shannon_ims_free);
++    g_free (self->priv->ims_apn);
++    self->priv->ims_apn = g_strdup ("ims");
 +    kf = g_key_file_new ();
 +    if (!g_key_file_load_from_file (kf, SHANNON_CONF, G_KEY_FILE_NONE, NULL)) {
 +        self->priv->ims = mm_shannon_ims_new (self, NULL);
 +        return;
 +    }
 +    self->priv->ims = mm_shannon_ims_new (self, kf);
++    if (g_key_file_has_key (kf, "ims", "apn", NULL)) {
++        g_free (self->priv->ims_apn);
++        self->priv->ims_apn = g_key_file_get_string (kf, "ims", "apn", NULL);
++    }
 +    g_free (self->priv->attach_apn);
 +    self->priv->attach_apn = g_key_file_get_string (kf, "attach", "apn", NULL);
 +    ip_type = g_key_file_get_string (kf, "attach", "ip-type", NULL);
@@ -939,25 +1022,39 @@ index 00000000..4d1412ff
 +        self->priv->attach_pdp = SIT_PDP_IPV6;
 +
 +    g_clear_pointer (&self->priv->carrier_manifest, g_byte_array_unref);
-+    g_clear_pointer (&self->priv->carrier_path, g_free);
++    g_free (self->priv->carrier_path);
++    self->priv->carrier_path = g_key_file_get_string (kf, "carrier", "path", NULL);
++    g_free (self->priv->carrier_db);
++    self->priv->carrier_db = g_key_file_get_string (kf, "carrier", "db", NULL);
 +    manifest = g_key_file_get_string (kf, "carrier", "manifest", NULL);
-+    if (manifest) {
-+        gsize   bin_len = 0;
-+        guint8 *bin;
-+
-+        bin = mm_utils_hexstr2bin (manifest, -1, &bin_len, NULL);
-+        if (bin && bin_len > 0 && bin_len <= 256) {
-+            self->priv->carrier_manifest = g_byte_array_new_take (bin, bin_len);
-+            self->priv->carrier_path = g_key_file_get_string (kf, "carrier", "path", NULL);
-+            if (!self->priv->carrier_path)
-+                self->priv->carrier_path = g_strdup (SHANNON_DEFAULT_CONFPACK);
-+        } else {
-+            mm_obj_warn (self, "invalid [carrier] manifest in %s", SHANNON_CONF);
-+            g_free (bin);
-+        }
-+    }
++    if (manifest && !set_carrier_manifest (self, manifest))
++        mm_obj_warn (self, "invalid [carrier] manifest in %s", SHANNON_CONF);
 +    mm_obj_info (self, "attach APN from %s: '%s' (pdp type %u)", SHANNON_CONF,
 +                 self->priv->attach_apn ? self->priv->attach_apn : "", self->priv->attach_pdp);
++}
++
++/* [carrier:<confpack entry name>] overrides for the carrier picked from the
++ * SIM (only what differs from the defaults, e.g. Verizon's IMS APN, which
++ * its carrier config requires in the APN table before it attaches) */
++static void
++apply_carrier_settings (MMBroadbandModemShannon *self)
++{
++    g_autoptr(GKeyFile)  kf = NULL;
++    g_autofree gchar    *group = NULL;
++    g_autofree gchar    *apn = NULL;
++
++    if (!self->priv->carrier_name || !self->priv->carrier_name[0])
++        return;
++    kf = g_key_file_new ();
++    if (!g_key_file_load_from_file (kf, SHANNON_CONF, G_KEY_FILE_NONE, NULL))
++        return;
++    group = g_strdup_printf ("carrier:%s", self->priv->carrier_name);
++    apn = g_key_file_get_string (kf, group, "ims-apn", NULL);
++    if (apn) {
++        mm_obj_info (self, "[%s] IMS APN '%s'", group, apn);
++        g_free (self->priv->ims_apn);
++        self->priv->ims_apn = g_steal_pointer (&apn);
++    }
 +}
 +
 +/* read per message, so the value can be changed without a restart */
@@ -1044,6 +1141,18 @@ index 00000000..4d1412ff
 +        }
 +        break;
 +    }
++    case SIT_IND_CP_CARRIER_SIM_INFO: {
++        /* the stock RIL picks the carrier from this; we read the SIM
++         * ourselves (layout per ProtocolMiscCarrierConfigSimInfoIndAdapter:
++         * strings from 0x00, not decoded yet) */
++        g_autofree gchar *hex = NULL;
++        gsize             len;
++        const guint8     *d = g_bytes_get_data (payload, &len);
++
++        hex = mm_utils_bin2hexstr (d, len);
++        mm_obj_dbg (self, "carrier SIM info: %s", hex);
++        break;
++    }
 +    case SIT_IND_CP_CARRIER_CONFIG_STATUS:
 +        if (self->priv->carrier_task) {
 +            GTask            *task;
@@ -1078,6 +1187,8 @@ index 00000000..4d1412ff
 +        break;
 +    case SIT_IND_NEW_SMS:
 +    case SIT_IND_NEW_SMS_STATUS_REPORT:
++    case SIT_IND_AIMS_NEW_SMS:
++    case SIT_IND_AIMS_NEW_SMS_STATUS_REPORT:
 +        sms_received (self, id, payload);
 +        break;
 +    case SIT_IND_NEW_SMS_ON_SIM:
@@ -1200,6 +1311,11 @@ index 00000000..4d1412ff
 +static void slot_map_ready (MMBroadbandModemShannon *self,
 +                            GAsyncResult            *res,
 +                            GTask                   *task);
++static void carrier_sim_status_ready (MMBroadbandModemShannon *self,
++                                      GAsyncResult            *res,
++                                      GTask                   *task);
++static void send_carrier_config (MMBroadbandModemShannon *self,
++                                 GTask                   *task);
 +
 +/* provisioned for the current CP boot? (stamp newer than the online flag) */
 +static gboolean
@@ -1216,12 +1332,15 @@ index 00000000..4d1412ff
 +             done.st_mtim.tv_nsec >= online.st_mtim.tv_nsec));
 +}
 +
++/* the stamp holds the confpack entry name picked for this CP boot, so a
++ * restarted ModemManager applies the same per-carrier settings */
 +static void
 +mark_cp_provisioned (MMBroadbandModemShannon *self)
 +{
 +    g_autoptr(GError) error = NULL;
++    const gchar      *name = self->priv->carrier_name ? self->priv->carrier_name : "";
 +
-+    if (!g_file_set_contents (SHANNON_CP_PROVISIONED, "", 0, &error))
++    if (!g_file_set_contents (SHANNON_CP_PROVISIONED, name, -1, &error))
 +        mm_obj_warn (self, "couldn't write %s: %s", SHANNON_CP_PROVISIONED, error->message);
 +}
 +
@@ -1236,6 +1355,7 @@ index 00000000..4d1412ff
 +    static const guint8 map[5] = { 2, 0, 1, 0, 0 };
 +
 +    self->priv->fresh_cp = TRUE;
++    g_clear_pointer (&self->priv->carrier_name, g_free);
 +    mm_obj_info (self, "mapping the tray SIM to logical slot 0");
 +    SIT_CMD (self, SIT_SET_LOGICAL_TO_PHYSICAL_SLOT_MAPPING, map, sizeof (map), 10,
 +             slot_map_ready, task);
@@ -1267,37 +1387,130 @@ index 00000000..4d1412ff
 +                GAsyncResult            *res,
 +                GTask                   *task)
 +{
-+    g_autoptr(GBytes)     payload = NULL;
-+    g_autoptr(GError)     error = NULL;
-+    g_autoptr(GByteArray) req = NULL;
-+    guint32               v;
-+    gsize                 plen;
++    g_autoptr(GBytes) payload = NULL;
++    g_autoptr(GError) error = NULL;
 +
 +    payload = SIT_FINISH (self, res, &error);
 +    if (!payload)
 +        mm_obj_dbg (self, "slot mapping: %s (expected on a cold CP)", error->message);
 +
-+    if (!self->priv->carrier_manifest) {
-+        mark_cp_provisioned (self);
-+        g_task_return_boolean (task, TRUE);
-+        g_object_unref (task);
++    if (self->priv->carrier_manifest) {
++        mm_obj_info (self, "carrier config from %s", SHANNON_CONF);
++        send_carrier_config (self, task);
 +        return;
 +    }
++    self->priv->carrier_sim_attempts = 0;
++    SIT_CMD (self, SIT_GET_SIM_STATUS, NULL, 0, 10, carrier_sim_status_ready, task);
++}
++
++static void
++skip_carrier_config (MMBroadbandModemShannon *self,
++                     GTask                   *task,
++                     const gchar             *reason)
++{
++    mm_obj_warn (self, "no carrier config sent (%s): the CP keeps its default", reason);
++    mark_cp_provisioned (self);
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++carrier_identity_ready (MMBroadbandModemShannon *self,
++                        GAsyncResult            *res,
++                        GTask                   *task)
++{
++    g_autoptr(MMShannonCarrier) carrier = NULL;
++    g_autoptr(GError)           error = NULL;
++    g_autofree gchar           *imsi = NULL;
++    g_autofree gchar           *gid1 = NULL;
++    g_autofree gchar           *iccid = NULL;
++
++    if (!mm_sim_shannon_read_identity_finish (self, res, &imsi, &gid1, &iccid, &error)) {
++        skip_carrier_config (self, task, error->message);
++        return;
++    }
++    carrier = mm_shannon_carrier_lookup (self->priv->carrier_db ? self->priv->carrier_db
++                                                                : SHANNON_DEFAULT_CARRIER_DB,
++                                         imsi, gid1, NULL, iccid, &error);
++    if (!carrier) {
++        skip_carrier_config (self, task, error->message);
++        return;
++    }
++    mm_obj_info (self, "SIM %.6s (GID1 %s): carrier %d '%s', confpack entry %d '%s'",
++                 imsi, gid1 ? gid1 : "none", carrier->carrier_id,
++                 carrier->name ? carrier->name : "?", carrier->config_id,
++                 carrier->config_name ? carrier->config_name : "?");
++    g_free (self->priv->carrier_name);
++    self->priv->carrier_name = g_strdup (carrier->config_name);
++    apply_carrier_settings (self);
++    if (!set_carrier_manifest (self, carrier->manifest)) {
++        skip_carrier_config (self, task, "invalid manifest in cfg.db");
++        return;
++    }
++    send_carrier_config (self, task);
++}
++
++static gboolean
++carrier_sim_status_retry_cb (GTask *task)
++{
++    SIT_CMD (g_task_get_source_object (task), SIT_GET_SIM_STATUS, NULL, 0, 10,
++             carrier_sim_status_ready, task);
++    return G_SOURCE_REMOVE;
++}
++
++/* the IMSI is readable once the USIM application is ready (state 5); right
++ * after the slot map the card reads as absent for a while */
++static void
++carrier_sim_status_ready (MMBroadbandModemShannon *self,
++                          GAsyncResult            *res,
++                          GTask                   *task)
++{
++    g_autoptr(GBytes) payload = NULL;
++    g_autoptr(GError) error = NULL;
++    MMSitSimStatus    st = { 0 };
++    gboolean          parsed;
++
++    payload = SIT_FINISH (self, res, &error);
++    parsed = payload && mm_sit_parse_sim_status (payload, &st);
++    if (parsed && st.card_state == 1 && st.n_apps && st.app_state == 5) {
++        mm_sim_shannon_read_identity (self, (GAsyncReadyCallback) carrier_identity_ready, task);
++        return;
++    }
++    if (parsed && st.card_state == 1 && (st.app_state == 2 || st.app_state == 3)) {
++        skip_carrier_config (self, task, "SIM locked");
++        return;
++    }
++    if (++self->priv->carrier_sim_attempts >= CARRIER_SIM_WAIT_ATTEMPTS) {
++        skip_carrier_config (self, task, parsed && st.card_state == 1 ? "SIM not ready" : "no SIM");
++        return;
++    }
++    g_timeout_add_seconds (1, (GSourceFunc) carrier_sim_status_retry_cb, task);
++}
++
++static void
++send_carrier_config (MMBroadbandModemShannon *self,
++                     GTask                   *task)
++{
++    g_autoptr(GByteArray) req = NULL;
++    const gchar          *path;
++    guint32               v;
++    gsize                 plen;
 +
 +    /* ProtocolMiscBuilder::BuildSetCpCarrierConfig: u32 len, path[256],
 +     * u32 len, manifest[256] */
++    path = self->priv->carrier_path ? self->priv->carrier_path : SHANNON_DEFAULT_CONFPACK;
 +    req = g_byte_array_sized_new (2 * (4 + 256));
 +    g_byte_array_set_size (req, 2 * (4 + 256));
 +    memset (req->data, 0, req->len);
-+    plen = MIN (strlen (self->priv->carrier_path), 255);
++    plen = MIN (strlen (path), 255);
 +    v = GUINT32_TO_LE ((guint32) plen);
 +    memcpy (req->data, &v, 4);
-+    memcpy (req->data + 4, self->priv->carrier_path, plen);
++    memcpy (req->data + 4, path, plen);
 +    v = GUINT32_TO_LE (self->priv->carrier_manifest->len);
 +    memcpy (req->data + 260, &v, 4);
 +    memcpy (req->data + 264, self->priv->carrier_manifest->data, self->priv->carrier_manifest->len);
 +
-+    mm_obj_info (self, "sending carrier config (%s)", self->priv->carrier_path);
++    mm_obj_info (self, "sending carrier config (%s)", path);
 +    SIT_CMD (self, SIT_SET_CP_CARRIER_CONFIG, req->data, req->len, 40, carrier_config_ready, task);
 +}
 +
@@ -1319,6 +1532,10 @@ index 00000000..4d1412ff
 +    }
 +    if (cp_provisioned ()) {
 +        mm_obj_dbg (self, "CP already provisioned for this boot");
++        g_free (shannon->priv->carrier_name);
++        shannon->priv->carrier_name = NULL;
++        if (g_file_get_contents (SHANNON_CP_PROVISIONED, &shannon->priv->carrier_name, NULL, NULL))
++            apply_carrier_settings (shannon);
 +        g_task_return_boolean (task, TRUE);
 +        g_object_unref (task);
 +        return;
@@ -1929,6 +2146,40 @@ index 00000000..4d1412ff
 +    g_slice_free (PowerContext, ctx);
 +}
 +
++/* SET_DATA_PROFILE (ProtocolPsBuilder::BuildSetDataProfile, 0xf6 B frame):
++ * 0x0c u32 profile id, 0x10 apn[101], 0x75 pdp, 0x76 roaming pdp, 0x77
++ * auth, 0x78 user[50], 0xaa password[49], 0xdd u32 max conns time, 0xe1 u32
++ * max conns, 0xe5 u32 wait time, 0xe9 u8 enabled, 0xea u32 APN types
++ * (Android ApnTypes bitmap), 0xee u32 bearer bitmap. Some carrier configs
++ * (Verizon) keep the CP from attaching until the APN table holds an IMS
++ * profile: the CP attaches on it, as with Android's setDataProfile. */
++#define SIT_DATA_PROFILE_LEN        0xf6
++#define DATA_PROFILE_ID_IMS         2
++#define APN_TYPE_IMS                0x40
++#define APN_TYPE_IA                 0x100
++
++static GByteArray *
++build_ims_data_profile (const gchar *apn)
++{
++    GByteArray *a;
++    gsize       len = SIT_DATA_PROFILE_LEN - SIT_RSP_HDR_LEN;
++    gsize       apn_len = MIN (strlen (apn), 100);
++    guint32     v;
++
++    a = g_byte_array_sized_new (len);
++    g_byte_array_set_size (a, len);
++    memset (a->data, 0, len);
++    v = GUINT32_TO_LE (DATA_PROFILE_ID_IMS);
++    memcpy (a->data + 0x0c - SIT_RSP_HDR_LEN, &v, 4);
++    memcpy (a->data + 0x10 - SIT_RSP_HDR_LEN, apn, apn_len);
++    a->data[0x75 - SIT_RSP_HDR_LEN] = SIT_PDP_IPV4V6;
++    a->data[0x76 - SIT_RSP_HDR_LEN] = SIT_PDP_IPV4V6;
++    a->data[0xe9 - SIT_RSP_HDR_LEN] = 1;
++    v = GUINT32_TO_LE (APN_TYPE_IMS | APN_TYPE_IA);
++    memcpy (a->data + 0xea - SIT_RSP_HDR_LEN, &v, 4);
++    return a;
++}
++
 +static void
 +add_step (GArray       *steps,
 +          const gchar  *name,
@@ -1944,6 +2195,18 @@ index 00000000..4d1412ff
 +}
 +
 +static void power_step_run (GTask *task);
++
++static void
++add_ims_profile_step (MMBroadbandModemShannon *self,
++                      GArray                  *steps)
++{
++    g_autoptr(GByteArray) profile = NULL;
++
++    if (!self->priv->ims_apn || !self->priv->ims_apn[0])
++        return;
++    profile = build_ims_data_profile (self->priv->ims_apn);
++    add_step (steps, "IMS data profile", SIT_SET_DATA_PROFILE, profile->data, profile->len, 10, FALSE);
++}
 +
 +static gboolean
 +power_step_retry_cb (GTask *task)
@@ -2095,6 +2358,7 @@ index 00000000..4d1412ff
 +        add_step (steps, "IND filter", SIT_SET_IND_FILTER, filter, sizeof (filter), 10, FALSE);
 +        add_step (steps, "NR mode", SIT_SET_NR_MODE, &nr_mode, 1, 10, FALSE);
 +        add_step (steps, "preferred network type", SIT_SET_PREFERRED_NTW_TYPE, pref, sizeof (pref), 10, FALSE);
++        add_ims_profile_step (self, steps);
 +        apn = mm_broadband_modem_shannon_build_apn_payload (0xfb, SHANNON_DEFAULT_CID,
 +                                                           self->priv->attach_apn, self->priv->attach_pdp);
 +        add_step (steps, "attach APN", SIT_SET_INITIAL_ATTACH_APN, apn->data, apn->len, 15, FALSE);
@@ -2158,6 +2422,9 @@ index 00000000..4d1412ff
 +    self->priv->recycling = TRUE;
 +    steps = new_steps ();
 +    add_radio_power_step (steps, FALSE);
++    /* on a fresh CP the first radio on may still drop the APN table (the
++     * Verizon config then idles until this cycle): send it again */
++    add_ims_profile_step (self, steps);
 +    apn = mm_broadband_modem_shannon_build_apn_payload (0xfb, SHANNON_DEFAULT_CID,
 +                                                       self->priv->attach_apn, self->priv->attach_pdp);
 +    add_step (steps, "attach APN", SIT_SET_INITIAL_ATTACH_APN, apn->data, apn->len, 15, FALSE);
@@ -2214,7 +2481,9 @@ index 00000000..4d1412ff
 +                ctx->cs.state, ctx->cs.rat, ctx->cs.reject_cause,
 +                ctx->ps.state, ctx->ps.rat, ctx->ps.reject_cause);
 +
-+    if (ctx->have_ps && ctx->ps.state == 0 && !ctx->ps.rat) {
++    /* not registered, not searching: with no RAT (provisioning lost) or
++     * camped on a cell (Verizon config without a usable APN table) */
++    if (ctx->have_ps && ctx->ps.state == 0) {
 +        if (!self->priv->ps_idle_since)
 +            self->priv->ps_idle_since = g_get_monotonic_time ();
 +    } else
@@ -2686,19 +2955,25 @@ index 00000000..4d1412ff
 +        mm_obj_warn (self, "SMS ack failed: %s", error->message);
 +}
 +
++/* acked on the path the SMS came in: SIT, or AIMS for SMS over IMS */
 +static void
 +sms_ack (MMBroadbandModemShannon *self,
++         guint                    ind_id,
 +         guint8                   tpid,
 +         gboolean                 success,
 +         guint8                   cause)
 +{
-+    guint8 req[SIT_SMS_ACK_PAYLOAD_LEN] = { 0 };
++    guint8 req[MAX (SIT_SMS_ACK_PAYLOAD_LEN, SIT_AIMS_SMS_ACK_PAYLOAD_LEN)] = { 0 };
 +
 +    req[0] = success ? 1 : 0;
 +    req[4] = tpid;
 +    req[5] = success ? 0 : cause;
-+    mm_broadband_modem_shannon_command (self, SIT_SEND_SMS_ACK, req, sizeof (req), 10,
-+                                        (GAsyncReadyCallback) sms_ack_ready, NULL);
++    if (ind_id == SIT_IND_AIMS_NEW_SMS || ind_id == SIT_IND_AIMS_NEW_SMS_STATUS_REPORT)
++        mm_broadband_modem_shannon_command (self, SIT_AIMS_SEND_SMS_ACK, req, SIT_AIMS_SMS_ACK_PAYLOAD_LEN, 10,
++                                            (GAsyncReadyCallback) sms_ack_ready, NULL);
++    else
++        mm_broadband_modem_shannon_command (self, SIT_SEND_SMS_ACK, req, SIT_SMS_ACK_PAYLOAD_LEN, 10,
++                                            (GAsyncReadyCallback) sms_ack_ready, NULL);
 +}
 +
 +static MMSmsPart *
@@ -2753,7 +3028,7 @@ index 00000000..4d1412ff
 +    }
 +    if (pdu_len == 0 || len < 2 + (gsize) pdu_len) {
 +        mm_obj_warn (self, "truncated new SMS IND (pdu %u, payload %" G_GSIZE_FORMAT ")", pdu_len, len);
-+        sms_ack (self, tpid, FALSE, 0xff);
++        sms_ack (self, id, tpid, FALSE, 0xff);
 +        return;
 +    }
 +
@@ -2761,7 +3036,7 @@ index 00000000..4d1412ff
 +    if (!part) {
 +        /* TP-FCS 0xff: unspecified error */
 +        mm_obj_warn (self, "couldn't parse SMS PDU %s: %s", hex, error->message);
-+        sms_ack (self, tpid, FALSE, 0xff);
++        sms_ack (self, id, tpid, FALSE, 0xff);
 +        return;
 +    }
 +
@@ -2775,7 +3050,7 @@ index 00000000..4d1412ff
 +        mm_obj_warn (self, "couldn't take SMS part: %s", error->message);
 +    /* acked even if the part was a duplicate or unwanted: a nack only makes
 +     * the network send it again */
-+    sms_ack (self, tpid, TRUE, 0);
++    sms_ack (self, id, tpid, TRUE, 0);
 +}
 +
 +static gboolean
@@ -3036,7 +3311,10 @@ index 00000000..4d1412ff
 +    MMBroadbandModemShannon *self = MM_BROADBAND_MODEM_SHANNON (object);
 +
 +    g_free (self->priv->attach_apn);
++    g_free (self->priv->ims_apn);
++    g_free (self->priv->carrier_name);
 +    g_free (self->priv->carrier_path);
++    g_free (self->priv->carrier_db);
 +    if (self->priv->smsc)
 +        g_byte_array_unref (self->priv->smsc);
 +    if (self->priv->carrier_manifest)
@@ -3482,10 +3760,10 @@ index 00000000..4d1412ff
 +}
 diff --git a/src/plugins/shannon/mm-broadband-modem-shannon.h b/src/plugins/shannon/mm-broadband-modem-shannon.h
 new file mode 100644
-index 00000000..02a2113d
+index 00000000..e2fba700
 --- /dev/null
 +++ b/src/plugins/shannon/mm-broadband-modem-shannon.h
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,85 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * Samsung Shannon modem driven over SIT (cpif), Google Pixel 6 (local plugin).
@@ -3552,6 +3830,13 @@ index 00000000..02a2113d
 +                                                          guint8       cid,
 +                                                          const gchar *apn,
 +                                                          guint8       pdp_type);
++/* SETUP_DATA_CALL request (v2 frame, matchAllRuleAllowed); apn_type: SIT
++ * APN type (0 default, 1 IMS, 2 emergency); pcscf_type: pdp type or 0 */
++GByteArray *mm_broadband_modem_shannon_build_setup_data_call (guint8       cid,
++                                                              const gchar *apn,
++                                                              guint8       pdp_type,
++                                                              guint8       apn_type,
++                                                              guint8       pcscf_type);
 +
 +/* SMSC from the SIM (GET_SMSC_ADDR at messaging enable) as the SEND_SMS
 + * smsc field: TS 24.011 RP address with its own length byte; NULL if unknown.
@@ -4608,12 +4893,223 @@ index 00000000..c2d1484e
 +                                       GError             **error);
 +
 +#endif /* MM_PORT_SIT_H */
+diff --git a/src/plugins/shannon/mm-shannon-carrier.c b/src/plugins/shannon/mm-shannon-carrier.c
+new file mode 100644
+index 00000000..c1fb18d0
+--- /dev/null
++++ b/src/plugins/shannon/mm-shannon-carrier.c
+@@ -0,0 +1,167 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * Carrier selection for the Shannon CP (local plugin).
++ *
++ * The CP loads its per-carrier configuration (bands, IMS, attach behaviour)
++ * from the confpack in the modem image once it is told which manifest to
++ * use (SET_CP_CARRIER_CONFIG). The confpack's cfg.db maps SIM identities to
++ * carriers:
++ *   carrier_info (carrier_id, mccmnc, imsi_prefix_xpattern, spn, gid1, gid2,
++ *                 iccid_prefix, ...)   '%' = any; xpattern uses '_' and '%'
++ *   confmap      (carrier_id, parent_id, confman)
++ *   carrier_parent (carrier_id, parent_id), confnames/carrier_name
++ * A carrier_info row matches when its MCC/MNC is a prefix of the IMSI and
++ * every non-wildcard field matches the SIM (GID1 by prefix, case-
++ * insensitive; the database pads GID1 with '0', SIMs pad the file with FF). The most specific row wins (the MVNO over its host network),
++ * as with Android's carrier id matching. Carriers without their own confpack
++ * entry use their parent's; nothing matched = the default entry (carrier 0).
++ */
++
++#include <string.h>
++#include <sqlite3.h>
++
++#define _LIBMM_INSIDE_MM
++#include <libmm-glib.h>
++
++#include "mm-shannon-carrier.h"
++
++void
++mm_shannon_carrier_free (MMShannonCarrier *carrier)
++{
++    if (!carrier)
++        return;
++    g_free (carrier->name);
++    g_free (carrier->config_name);
++    g_free (carrier->manifest);
++    g_free (carrier);
++}
++
++static gchar *
++query_text (sqlite3     *db,
++            const gchar *sql,
++            gint         id)
++{
++    sqlite3_stmt *st = NULL;
++    gchar        *out = NULL;
++
++    if (sqlite3_prepare_v2 (db, sql, -1, &st, NULL) != SQLITE_OK)
++        return NULL;
++    sqlite3_bind_int (st, 1, id);
++    if (sqlite3_step (st) == SQLITE_ROW && sqlite3_column_text (st, 0))
++        out = g_strdup ((const gchar *) sqlite3_column_text (st, 0));
++    sqlite3_finalize (st);
++    return out;
++}
++
++/* confpack entry of the carrier or its nearest ancestor */
++static gchar *
++find_manifest (sqlite3 *db,
++               gint     carrier_id,
++               gint    *config_id)
++{
++    guint i;
++
++    for (i = 0; i < 8; i++) {
++        g_autofree gchar *man = NULL;
++        g_autofree gchar *parent = NULL;
++
++        man = query_text (db, "SELECT confman FROM confmap WHERE CAST(carrier_id AS INTEGER) = ?1", carrier_id);
++        if (man) {
++            *config_id = carrier_id;
++            return g_steal_pointer (&man);
++        }
++        parent = query_text (db,
++                             "SELECT parent_id FROM carrier_parent WHERE carrier_id = ?1 "
++                             "UNION ALL SELECT parent_id FROM confmap "
++                             "WHERE CAST(carrier_id AS INTEGER) = ?1 AND parent_id IS NOT NULL "
++                             "AND parent_id != '' LIMIT 1",
++                             carrier_id);
++        if (!parent)
++            return NULL;
++        carrier_id = (gint) g_ascii_strtoll (parent, NULL, 10);
++    }
++    return NULL;
++}
++
++MMShannonCarrier *
++mm_shannon_carrier_lookup (const gchar  *db_path,
++                           const gchar  *imsi,
++                           const gchar  *gid1,
++                           const gchar  *spn,
++                           const gchar  *iccid,
++                           GError      **error)
++{
++    g_autoptr(MMShannonCarrier) carrier = NULL;
++    sqlite3                    *db = NULL;
++    sqlite3_stmt               *st = NULL;
++    g_autofree gchar           *uri = NULL;
++    /* Candidates, most specific first. The SIM values are bound as LIKE
++     * subjects: the database supplies the patterns. GID1 compares by prefix
++     * with the padding dropped on both sides. */
++    static const gchar *sql =
++        "SELECT carrier_id, "
++        "  (gid1 != '%') + (spn != '%') + (imsi_prefix_xpattern != '%') + "
++        "  (iccid_prefix IS NOT NULL AND iccid_prefix != '') AS score "
++        "FROM carrier_info "
++        "WHERE substr(?1, 1, length(mccmnc)) = mccmnc "
++        "  AND ?1 LIKE imsi_prefix_xpattern || '%' "
++        "  AND (gid1 = '%' OR rtrim(upper(?2), 'F') LIKE "
++        "       coalesce(nullif(rtrim(upper(gid1), '0'), ''), upper(gid1)) || '%') "
++        "  AND (spn = '%' OR ?3 LIKE spn) "
++        "  AND (iccid_prefix IS NULL OR iccid_prefix = '' OR ?4 LIKE iccid_prefix || '%') "
++        "ORDER BY score DESC, length(mccmnc) DESC, carrier_id";
++    gint rc;
++
++    g_return_val_if_fail (imsi != NULL, NULL);
++
++    uri = g_strdup_printf ("file:%s?mode=ro&immutable=1", db_path);
++    if (sqlite3_open_v2 (uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, NULL) != SQLITE_OK) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "couldn't open %s: %s",
++                     db_path, db ? sqlite3_errmsg (db) : "out of memory");
++        sqlite3_close (db);
++        return NULL;
++    }
++
++    carrier = g_new0 (MMShannonCarrier, 1);
++    carrier->carrier_id = -1;
++    if (sqlite3_prepare_v2 (db, sql, -1, &st, NULL) != SQLITE_OK) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "unexpected cfg.db layout: %s",
++                     sqlite3_errmsg (db));
++        sqlite3_close (db);
++        return NULL;
++    }
++    sqlite3_bind_text (st, 1, imsi, -1, SQLITE_STATIC);
++    sqlite3_bind_text (st, 2, gid1 ? gid1 : "", -1, SQLITE_STATIC);
++    sqlite3_bind_text (st, 3, spn ? spn : "", -1, SQLITE_STATIC);
++    sqlite3_bind_text (st, 4, iccid ? iccid : "", -1, SQLITE_STATIC);
++    /* first candidate that has a confpack entry (itself or a parent) */
++    while ((rc = sqlite3_step (st)) == SQLITE_ROW) {
++        gint id = sqlite3_column_int (st, 0);
++
++        carrier->manifest = find_manifest (db, id, &carrier->config_id);
++        if (carrier->manifest) {
++            carrier->carrier_id = id;
++            break;
++        }
++    }
++    sqlite3_finalize (st);
++
++    if (!carrier->manifest) {
++        carrier->carrier_id = 0;
++        carrier->manifest = find_manifest (db, 0, &carrier->config_id);
++    }
++    if (carrier->manifest) {
++        carrier->name = query_text (db, "SELECT name FROM carrier_name WHERE carrier_id = ?1",
++                                    carrier->carrier_id);
++        carrier->config_name = query_text (db, "SELECT name FROM confnames WHERE carrier_id = ?1",
++                                           carrier->config_id);
++    }
++    sqlite3_close (db);
++
++    if (!carrier->manifest) {
++        g_set_error (error, MM_CORE_ERROR, MM_CORE_ERROR_NOT_FOUND,
++                     "no confpack entry for IMSI %.6s", imsi);
++        return NULL;
++    }
++    return g_steal_pointer (&carrier);
++}
+diff --git a/src/plugins/shannon/mm-shannon-carrier.h b/src/plugins/shannon/mm-shannon-carrier.h
+new file mode 100644
+index 00000000..f136e0eb
+--- /dev/null
++++ b/src/plugins/shannon/mm-shannon-carrier.h
+@@ -0,0 +1,32 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * Carrier selection for the Shannon CP (local plugin): match the SIM against
++ * the confpack carrier database (cfg.db) shipped in the modem image.
++ */
++
++#ifndef MM_SHANNON_CARRIER_H
++#define MM_SHANNON_CARRIER_H
++
++#include <glib.h>
++
++typedef struct {
++    gint   carrier_id;   /* matched carrier (before parent fallback) */
++    gchar *name;         /* its carrier_name, may be NULL */
++    gint   config_id;    /* carrier whose confpack entry is used */
++    gchar *config_name;  /* confnames of that entry (e.g. us_vzw), may be NULL */
++    gchar *manifest;     /* confman sha1, 40 hex digits */
++} MMShannonCarrier;
++
++void mm_shannon_carrier_free (MMShannonCarrier *carrier);
++G_DEFINE_AUTOPTR_CLEANUP_FUNC (MMShannonCarrier, mm_shannon_carrier_free)
++
++/* imsi is required; gid1 (hex), spn and iccid may be NULL. Without any
++ * carrier_info match the default entry (carrier 0) is returned. */
++MMShannonCarrier *mm_shannon_carrier_lookup (const gchar  *db_path,
++                                             const gchar  *imsi,
++                                             const gchar  *gid1,
++                                             const gchar  *spn,
++                                             const gchar  *iccid,
++                                             GError      **error);
++
++#endif /* MM_SHANNON_CARRIER_H */
 diff --git a/src/plugins/shannon/mm-shannon-ims.c b/src/plugins/shannon/mm-shannon-ims.c
 new file mode 100644
-index 00000000..bac81d82
+index 00000000..40e763f5
 --- /dev/null
 +++ b/src/plugins/shannon/mm-shannon-ims.c
-@@ -0,0 +1,1220 @@
+@@ -0,0 +1,1207 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * VoLTE on a Shannon modem (local plugin): IMS bring-up for the CP's AIMS
@@ -4627,7 +5123,7 @@ index 00000000..bac81d82
 + *
 + * Layouts are from the stock ShannonIms app (network/adaptor/data/RilReq*
 + * getBytes() and RilInd* parsers, little-endian) and were checked against
-+ * live frames on the phone.
++ * live frames (PIXEL6-LOCAL.md item 12 "VOLTE").
 + *
 + * Settings: /etc/ModemManager/shannon.conf
 + *   [ims]
@@ -4664,8 +5160,6 @@ index 00000000..bac81d82
 +#define SIT_SET_AUDIOPATH           0x0a05
 +#define SIT_SET_AUDIO_CLK           0x0a0a
 +
-+/* SETUP_DATA_CALL v2 frame (the v1 frame is 0xf6 B) */
-+#define SIT_SETUP_DATA_CALL_V2_LEN  0x27e
 +#define SIT_APN_TYPE_IMS            1
 +
 +/* AIMS_DIAL (RilReqDial) payload: u16 type, u8 clir, u16 len, number[513],
@@ -5242,23 +5736,9 @@ index 00000000..bac81d82
 +request_pdn (MMShannonIms *self)
 +{
 +    g_autoptr(GByteArray) req = NULL;
-+    guint8               *f;
-+    gsize                 apn_len = MIN (strlen (self->apn), 100);
 +
-+    /* v2 SETUP_DATA_CALL with matchAllRuleAllowed (v1 or 0 fails with
-+     * 2253 MATCH_ALL_RULE_NOT_ALLOWED); frame offsets minus the header */
-+    req = mm_broadband_modem_shannon_build_apn_payload (SIT_SETUP_DATA_CALL_V2_LEN, self->cid,
-+                                                        self->apn, SIT_PDP_IPV4V6);
-+    f = req->data - SIT_RSP_HDR_LEN;
-+    f[0x0f] = SIT_APN_TYPE_IMS;
-+    f[0xdb] = SIT_PDP_IPV4V6;            /* P-CSCF request type */
-+    f[0xf5] = 1;                         /* request version 1 = v2 */
-+    memset (f + 0xf6, 0, 4);             /* (build_apn_payload puts the attach pdp at 0xf8) */
-+    memset (f + 0xfc, 0xff, 4);          /* no slice SD */
-+    memset (f + 0x101, 0xff, 4);
-+    f[0x105] = 1;                        /* matchAllRuleAllowed */
-+    f[0x106] = 2;                        /* traffic descriptor: DNN */
-+    memcpy (f + 0x10a, self->apn, apn_len);
++    req = mm_broadband_modem_shannon_build_setup_data_call (self->cid, self->apn, SIT_PDP_IPV4V6,
++                                                            SIT_APN_TYPE_IMS, SIT_PDP_IPV4V6);
 +
 +    self->pdn_requested = TRUE;
 +    ims_info (self, "requesting IMS PDN (cid %u, apn '%s')", self->cid, self->apn);
@@ -5640,6 +6120,9 @@ index 00000000..bac81d82
 +                ims_fail (self, "IMS PDN went down");
 +        }
 +        return FALSE;   /* the bearer wants it too */
++    case SIT_IND_AIMS_NEW_SMS:
++    case SIT_IND_AIMS_NEW_SMS_STATUS_REPORT:
++        return FALSE;   /* SMS over IMS: the modem's messaging code */
 +    default:
 +        /* other AIMS INDs: ringback tone, RTP stats, frame time, ... */
 +        return (id & 0xff00) == 0x0d00;
@@ -5911,18 +6394,18 @@ index 00000000..e6e02018
 +#endif /* MM_SHANNON_IMS_H */
 diff --git a/src/plugins/shannon/mm-sim-shannon.c b/src/plugins/shannon/mm-sim-shannon.c
 new file mode 100644
-index 00000000..8aa932af
+index 00000000..62036494
 --- /dev/null
 +++ b/src/plugins/shannon/mm-sim-shannon.c
-@@ -0,0 +1,434 @@
+@@ -0,0 +1,633 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * SIM card behind a Shannon modem, read over SIT (local plugin).
 + *
 + * IMSI comes from SIT_GET_IMSI; the operator id is derived from it. The
-+ * ICCID is read from EF_ICCID over a logical channel opened on the USIM
-+ * (open 0x0247 / APDU 0x020f / close 0x020e, as simread.py): read-only, and
-+ * the CP's own basic-channel file selection is left alone. PIN handling is
++ * ICCID (EF_ICCID) and GID1 (EF_GID1) are read over a logical channel opened
++ * on the USIM (open 0x0247 / APDU 0x020f / close 0x020e, as simread.py):
++ * read-only, and the CP's own basic-channel file selection is left alone. PIN handling is
 + * not implemented (the test SIM has no PIN).
 + */
 +
@@ -5932,6 +6415,7 @@ index 00000000..8aa932af
 +#include <libmm-glib.h>
 +
 +#include "mm-log-object.h"
++#include "mm-modem-helpers.h"
 +#include "mm-base-modem.h"
 +#include "mm-bind.h"
 +#include "mm-broadband-modem-shannon.h"
@@ -5939,6 +6423,14 @@ index 00000000..8aa932af
 +#include "mm-sit-helpers.h"
 +
 +G_DEFINE_TYPE (MMSimShannon, mm_sim_shannon, MM_TYPE_BASE_SIM)
++
++/* BuildGetImsi(aid): u8 aid length + aid[16]; empty = current app */
++static const guint8 imsi_request[17] = { 0 };
++
++typedef enum {
++    EF_FILE_ICCID,
++    EF_FILE_GID1,
++} EfFile;
 +
 +/*****************************************************************************/
 +
@@ -5972,13 +6464,11 @@ index 00000000..8aa932af
 +{
 +    g_autoptr(MMBaseModem) modem = NULL;
 +    GTask                 *task;
-+    /* BuildGetImsi(aid): u8 aid length + aid[16]; empty = current app */
-+    static const guint8    req[17] = { 0 };
 +
 +    task = g_task_new (self, NULL, callback, user_data);
 +    g_object_get (self, MM_BASE_SIM_MODEM, &modem, NULL);
 +    mm_broadband_modem_shannon_command (MM_BROADBAND_MODEM_SHANNON (modem), SIT_GET_IMSI,
-+                                        req, sizeof (req), 10,
++                                        imsi_request, sizeof (imsi_request), 10,
 +                                        (GAsyncReadyCallback) imsi_ready, task);
 +}
 +
@@ -6033,38 +6523,43 @@ index 00000000..8aa932af
 +}
 +
 +/*****************************************************************************/
-+/* ICCID */
++/* Elementary file reads (ICCID, GID1) */
 +
 +typedef enum {
-+    ICCID_STEP_OPEN,
-+    ICCID_STEP_SELECT,
-+    ICCID_STEP_READ,
-+    ICCID_STEP_CLOSE,
-+} IccidStep;
++    EF_STEP_OPEN,
++    EF_STEP_SELECT,
++    EF_STEP_READ,
++    EF_STEP_CLOSE,
++} EfStep;
 +
 +typedef struct {
 +    MMBroadbandModemShannon *modem;
-+    IccidStep                step;
++    EfStep                   step;
++    guint8                   p1;
++    guint8                   path[4];
++    guint8                   path_len;
++    guint8                   le;
++    gboolean                 le_retried;
 +    guint32                  channel;
 +    gboolean                 channel_open;
-+    gchar                   *iccid;
++    GBytes                  *data;
 +    GError                  *error;
-+} IccidContext;
++} EfContext;
 +
 +static void
-+iccid_context_free (IccidContext *ctx)
++ef_context_free (EfContext *ctx)
 +{
 +    g_clear_object (&ctx->modem);
-+    g_free (ctx->iccid);
++    g_clear_pointer (&ctx->data, g_bytes_unref);
 +    g_clear_error (&ctx->error);
-+    g_slice_free (IccidContext, ctx);
++    g_slice_free (EfContext, ctx);
 +}
 +
 +/* APDU on a logical channel (0x020f): u32 channel, cla, ins, p1, p2, p3,
 + * u16 data length, data, zero padding to 0x1a + 2 * len payload bytes.
 + * Response: sw1, sw2, u16 length, data. */
 +static void
-+send_apdu (IccidContext        *ctx,
++send_apdu (EfContext           *ctx,
 +           guint8               ins,
 +           guint8               p1,
 +           guint8               p2,
@@ -6103,7 +6598,7 @@ index 00000000..8aa932af
 +                                        a->data, a->len, 10, callback, task);
 +}
 +
-+static void iccid_step (GTask *task);
++static void ef_step (GTask *task);
 +
 +static gboolean
 +apdu_result (GBytes        *payload,
@@ -6128,11 +6623,11 @@ index 00000000..8aa932af
 +}
 +
 +static void
-+iccid_step_ready (MMBroadbandModemShannon *modem,
-+                  GAsyncResult            *res,
-+                  GTask                   *task)
++ef_step_ready (MMBroadbandModemShannon *modem,
++               GAsyncResult            *res,
++               GTask                   *task)
 +{
-+    IccidContext      *ctx = g_task_get_task_data (task);
++    EfContext         *ctx = g_task_get_task_data (task);
 +    g_autoptr(GBytes)  payload = NULL;
 +    GError            *error = NULL;
 +    const guint8      *data = NULL;
@@ -6142,7 +6637,7 @@ index 00000000..8aa932af
 +    payload = mm_broadband_modem_shannon_command_finish (modem, res, &error);
 +
 +    switch (ctx->step) {
-+    case ICCID_STEP_OPEN: {
++    case EF_STEP_OPEN: {
 +        const guint8 *d;
 +        gsize         len = 0;
 +
@@ -6157,73 +6652,67 @@ index 00000000..8aa932af
 +        }
 +        ctx->channel = d[0] | (d[1] << 8) | (d[2] << 16) | ((guint32) d[3] << 24);
 +        ctx->channel_open = TRUE;
-+        ctx->step = ICCID_STEP_SELECT;
++        ctx->step = EF_STEP_SELECT;
 +        break;
 +    }
-+    case ICCID_STEP_SELECT:
++    case EF_STEP_SELECT:
 +        /* 9000 or 61xx (FCP available): either way the EF is selected */
 +        if (!payload || !apdu_result (payload, &sw, &data, &data_len) ||
 +            (sw != 0x9000 && (sw >> 8) != 0x61)) {
 +            ctx->error = error ? error :
 +                g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
-+                             "SELECT EF_ICCID failed (SW %04x)", sw);
-+            ctx->step = ICCID_STEP_CLOSE;
++                             "SELECT EF %02X%02X failed (SW %04x)",
++                             ctx->path[ctx->path_len - 2], ctx->path[ctx->path_len - 1], sw);
++            error = NULL;
++            ctx->step = EF_STEP_CLOSE;
 +            break;
 +        }
-+        ctx->step = ICCID_STEP_READ;
++        ctx->step = EF_STEP_READ;
 +        break;
-+    case ICCID_STEP_READ:
++    case EF_STEP_READ:
++        /* 6Cxx: wrong length, xx is the right one (le 0 = whole file) */
++        if (payload && apdu_result (payload, &sw, &data, &data_len) &&
++            (sw >> 8) == 0x6C && !ctx->le_retried) {
++            ctx->le = sw & 0xff;
++            ctx->le_retried = TRUE;
++            break;
++        }
 +        if (!payload || !apdu_result (payload, &sw, &data, &data_len) ||
 +            sw != 0x9000 || data_len < 1) {
 +            ctx->error = error ? error :
 +                g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
-+                             "READ BINARY EF_ICCID failed (SW %04x)", sw);
-+        } else {
-+            GString *s = g_string_new (NULL);
-+            gsize    i;
-+
-+            /* BCD, low nibble first, 0xF terminates */
-+            for (i = 0; i < data_len; i++) {
-+                guint8 lo = data[i] & 0x0f, hi = data[i] >> 4;
-+
-+                if (lo > 9)
-+                    break;
-+                g_string_append_c (s, '0' + lo);
-+                if (hi > 9)
-+                    break;
-+                g_string_append_c (s, '0' + hi);
-+            }
-+            ctx->iccid = g_string_free (s, FALSE);
-+        }
-+        ctx->step = ICCID_STEP_CLOSE;
++                             "READ BINARY EF %02X%02X failed (SW %04x)",
++                             ctx->path[ctx->path_len - 2], ctx->path[ctx->path_len - 1], sw);
++            error = NULL;
++        } else
++            ctx->data = g_bytes_new (data, data_len);
++        ctx->step = EF_STEP_CLOSE;
 +        break;
-+    case ICCID_STEP_CLOSE:
++    case EF_STEP_CLOSE:
 +        if (error)
 +            mm_obj_dbg (g_task_get_source_object (task), "closing SIM channel %u: %s",
 +                        ctx->channel, error->message);
 +        g_clear_error (&error);
 +        if (ctx->error)
 +            g_task_return_error (task, g_steal_pointer (&ctx->error));
-+        else if (!ctx->iccid || !ctx->iccid[0])
-+            g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Empty ICCID");
 +        else
-+            g_task_return_pointer (task, g_steal_pointer (&ctx->iccid), g_free);
++            g_task_return_pointer (task, g_steal_pointer (&ctx->data), (GDestroyNotify) g_bytes_unref);
 +        g_object_unref (task);
 +        return;
 +    default:
 +        g_assert_not_reached ();
 +    }
 +    g_clear_error (&error);
-+    iccid_step (task);
++    ef_step (task);
 +}
 +
 +static void
-+iccid_step (GTask *task)
++ef_step (GTask *task)
 +{
-+    IccidContext *ctx = g_task_get_task_data (task);
++    EfContext *ctx = g_task_get_task_data (task);
 +
 +    switch (ctx->step) {
-+    case ICCID_STEP_OPEN: {
++    case EF_STEP_OPEN: {
 +        /* u8 aid length, aid[16], u8 p2; partial USIM AID (RID + app code) */
 +        static const guint8 req[18] = {
 +            7, 0xA0, 0x00, 0x00, 0x00, 0x87, 0x10, 0x02,
@@ -6231,27 +6720,24 @@ index 00000000..8aa932af
 +
 +        mm_broadband_modem_shannon_command (ctx->modem, SIT_OPEN_SIM_CHANNEL_WITH_P2,
 +                                            req, sizeof (req), 10,
-+                                            (GAsyncReadyCallback) iccid_step_ready, task);
++                                            (GAsyncReadyCallback) ef_step_ready, task);
 +        return;
 +    }
-+    case ICCID_STEP_SELECT: {
-+        /* SELECT by path from MF, return FCP: EF_ICCID 2FE2 */
-+        static const guint8 path[2] = { 0x2F, 0xE2 };
-+
-+        send_apdu (ctx, 0xA4, 0x08, 0x04, sizeof (path), path, sizeof (path),
-+                   (GAsyncReadyCallback) iccid_step_ready, task);
++    case EF_STEP_SELECT:
++        /* return FCP */
++        send_apdu (ctx, 0xA4, ctx->p1, 0x04, ctx->path_len, ctx->path, ctx->path_len,
++                   (GAsyncReadyCallback) ef_step_ready, task);
 +        return;
-+    }
-+    case ICCID_STEP_READ:
-+        send_apdu (ctx, 0xB0, 0x00, 0x00, 10, NULL, 0,
-+                   (GAsyncReadyCallback) iccid_step_ready, task);
++    case EF_STEP_READ:
++        send_apdu (ctx, 0xB0, 0x00, 0x00, ctx->le, NULL, 0,
++                   (GAsyncReadyCallback) ef_step_ready, task);
 +        return;
-+    case ICCID_STEP_CLOSE: {
++    case EF_STEP_CLOSE: {
 +        guint32 ch = GUINT32_TO_LE (ctx->channel);
 +
 +        mm_broadband_modem_shannon_command (ctx->modem, SIT_CLOSE_SIM_CHANNEL,
 +                                            (const guint8 *) &ch, sizeof (ch), 10,
-+                                            (GAsyncReadyCallback) iccid_step_ready, task);
++                                            (GAsyncReadyCallback) ef_step_ready, task);
 +        return;
 +    }
 +    default:
@@ -6259,22 +6745,218 @@ index 00000000..8aa932af
 +    }
 +}
 +
++/* Transparent EF over a logical channel opened on the USIM: read-only, and
++ * the CP's own basic-channel file selection is left alone. */
++static void
++read_ef (MMBroadbandModemShannon *modem,
++         EfFile                   file,
++         GAsyncReadyCallback      callback,
++         gpointer                 user_data)
++{
++    EfContext *ctx;
++    GTask     *task;
++
++    task = g_task_new (modem, NULL, callback, user_data);
++    ctx = g_slice_new0 (EfContext);
++    ctx->modem = g_object_ref (modem);
++    ctx->step = EF_STEP_OPEN;
++    switch (file) {
++    case EF_FILE_ICCID:
++        /* SELECT by path from MF: 2FE2 */
++        ctx->p1 = 0x08;
++        ctx->path[0] = 0x2F; ctx->path[1] = 0xE2;
++        ctx->le = 10;
++        break;
++    case EF_FILE_GID1:
++        /* SELECT by file id under ADF.USIM (the channel's current DF) */
++        ctx->p1 = 0x00;
++        ctx->path[0] = 0x6F; ctx->path[1] = 0x3E;
++        ctx->le = 0;
++        break;
++    default:
++        g_assert_not_reached ();
++    }
++    ctx->path_len = 2;
++    g_task_set_task_data (task, ctx, (GDestroyNotify) ef_context_free);
++    ef_step (task);
++}
++
++static GBytes *
++read_ef_finish (MMBroadbandModemShannon  *modem,
++                GAsyncResult             *res,
++                GError                  **error)
++{
++    return g_task_propagate_pointer (G_TASK (res), error);
++}
++
++/* BCD, low nibble first, 0xF terminates */
++static gchar *
++decode_iccid (GBytes *bytes)
++{
++    const guint8 *data;
++    gsize         data_len, i;
++    GString      *s = g_string_new (NULL);
++
++    data = g_bytes_get_data (bytes, &data_len);
++    for (i = 0; i < data_len; i++) {
++        guint8 lo = data[i] & 0x0f, hi = data[i] >> 4;
++
++        if (lo > 9)
++            break;
++        g_string_append_c (s, '0' + lo);
++        if (hi > 9)
++            break;
++        g_string_append_c (s, '0' + hi);
++    }
++    return g_string_free (s, FALSE);
++}
++
++static void
++iccid_ready (MMBroadbandModemShannon *modem,
++             GAsyncResult            *res,
++             GTask                   *task)
++{
++    g_autoptr(GBytes) bytes = NULL;
++    GError           *error = NULL;
++    gchar            *iccid;
++
++    bytes = read_ef_finish (modem, res, &error);
++    if (!bytes) {
++        g_task_return_error (task, error);
++        g_object_unref (task);
++        return;
++    }
++    iccid = decode_iccid (bytes);
++    if (!iccid[0]) {
++        g_free (iccid);
++        g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Empty ICCID");
++    } else
++        g_task_return_pointer (task, iccid, g_free);
++    g_object_unref (task);
++}
++
 +static void
 +load_sim_identifier (MMBaseSim           *self,
 +                     GAsyncReadyCallback  callback,
 +                     gpointer             user_data)
 +{
-+    MMBaseModem  *modem = NULL;
-+    IccidContext *ctx;
-+    GTask        *task;
++    g_autoptr(MMBaseModem) modem = NULL;
++    GTask                 *task;
 +
 +    task = g_task_new (self, NULL, callback, user_data);
-+    ctx = g_slice_new0 (IccidContext);
 +    g_object_get (self, MM_BASE_SIM_MODEM, &modem, NULL);
-+    ctx->modem = MM_BROADBAND_MODEM_SHANNON (modem);
-+    ctx->step = ICCID_STEP_OPEN;
-+    g_task_set_task_data (task, ctx, (GDestroyNotify) iccid_context_free);
-+    iccid_step (task);
++    read_ef (MM_BROADBAND_MODEM_SHANNON (modem), EF_FILE_ICCID,
++             (GAsyncReadyCallback) iccid_ready, task);
++}
++
++/*****************************************************************************/
++/* SIM identity for carrier selection, read before the SIM object exists */
++
++typedef struct {
++    gchar *imsi;
++    gchar *gid1;
++    gchar *iccid;
++} IdentityContext;
++
++static void
++identity_context_free (IdentityContext *ctx)
++{
++    g_free (ctx->imsi);
++    g_free (ctx->gid1);
++    g_free (ctx->iccid);
++    g_slice_free (IdentityContext, ctx);
++}
++
++gboolean
++mm_sim_shannon_read_identity_finish (MMBroadbandModemShannon  *modem,
++                                     GAsyncResult             *res,
++                                     gchar                   **imsi,
++                                     gchar                   **gid1,
++                                     gchar                   **iccid,
++                                     GError                  **error)
++{
++    IdentityContext *ctx;
++
++    if (!g_task_propagate_boolean (G_TASK (res), error))
++        return FALSE;
++    ctx = g_task_get_task_data (G_TASK (res));
++    *imsi = g_steal_pointer (&ctx->imsi);
++    *gid1 = g_steal_pointer (&ctx->gid1);
++    *iccid = g_steal_pointer (&ctx->iccid);
++    return TRUE;
++}
++
++static void
++identity_gid1_ready (MMBroadbandModemShannon *modem,
++                     GAsyncResult            *res,
++                     GTask                   *task)
++{
++    IdentityContext   *ctx = g_task_get_task_data (task);
++    g_autoptr(GBytes)  bytes = NULL;
++    g_autoptr(GError)  error = NULL;
++
++    /* EF_GID1 is optional (absent = no MVNO marker) */
++    bytes = read_ef_finish (modem, res, &error);
++    if (bytes) {
++        gsize         len;
++        const guint8 *d = g_bytes_get_data (bytes, &len);
++
++        ctx->gid1 = mm_utils_bin2hexstr (d, len);
++    } else
++        mm_obj_dbg (modem, "no GID1: %s", error->message);
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++identity_iccid_ready (MMBroadbandModemShannon *modem,
++                      GAsyncResult            *res,
++                      GTask                   *task)
++{
++    IdentityContext   *ctx = g_task_get_task_data (task);
++    g_autoptr(GBytes)  bytes = NULL;
++    g_autoptr(GError)  error = NULL;
++
++    bytes = read_ef_finish (modem, res, &error);
++    if (bytes)
++        ctx->iccid = decode_iccid (bytes);
++    else
++        mm_obj_dbg (modem, "no ICCID: %s", error->message);
++    read_ef (modem, EF_FILE_GID1, (GAsyncReadyCallback) identity_gid1_ready, task);
++}
++
++static void
++identity_imsi_ready (MMBroadbandModemShannon *modem,
++                     GAsyncResult            *res,
++                     GTask                   *task)
++{
++    IdentityContext   *ctx = g_task_get_task_data (task);
++    g_autoptr(GBytes)  payload = NULL;
++    GError            *error = NULL;
++
++    payload = mm_broadband_modem_shannon_command_finish (modem, res, &error);
++    if (payload)
++        ctx->imsi = mm_sit_parse_digits (payload);
++    if (!ctx->imsi || strlen (ctx->imsi) < 6) {
++        g_task_return_error (task, error ? error :
++                             g_error_new (MM_CORE_ERROR, MM_CORE_ERROR_FAILED, "Invalid IMSI"));
++        g_object_unref (task);
++        return;
++    }
++    read_ef (modem, EF_FILE_ICCID, (GAsyncReadyCallback) identity_iccid_ready, task);
++}
++
++void
++mm_sim_shannon_read_identity (MMBroadbandModemShannon *modem,
++                              GAsyncReadyCallback      callback,
++                              gpointer                 user_data)
++{
++    GTask *task;
++
++    task = g_task_new (modem, NULL, callback, user_data);
++    g_task_set_task_data (task, g_slice_new0 (IdentityContext), (GDestroyNotify) identity_context_free);
++    mm_broadband_modem_shannon_command (modem, SIT_GET_IMSI, imsi_request, sizeof (imsi_request), 10,
++                                        (GAsyncReadyCallback) identity_imsi_ready, task);
 +}
 +
 +/*****************************************************************************/
@@ -6351,10 +7033,10 @@ index 00000000..8aa932af
 +}
 diff --git a/src/plugins/shannon/mm-sim-shannon.h b/src/plugins/shannon/mm-sim-shannon.h
 new file mode 100644
-index 00000000..fb4cb1df
+index 00000000..a783a2df
 --- /dev/null
 +++ b/src/plugins/shannon/mm-sim-shannon.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,55 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * SIM card behind a Shannon modem, read over SIT (local plugin).
@@ -6395,6 +7077,19 @@ index 00000000..fb4cb1df
 +                                      gpointer             user_data);
 +MMBaseSim *mm_sim_shannon_new_finish (GAsyncResult        *res,
 +                                      GError             **error);
++
++/* IMSI, ICCID and GID1 (hex; NULL when the SIM has no EF_GID1), read before
++ * the SIM object exists: the CP's carrier config depends on them */
++typedef struct _MMBroadbandModemShannon MMBroadbandModemShannon;
++void     mm_sim_shannon_read_identity        (MMBroadbandModemShannon  *modem,
++                                              GAsyncReadyCallback       callback,
++                                              gpointer                  user_data);
++gboolean mm_sim_shannon_read_identity_finish (MMBroadbandModemShannon  *modem,
++                                              GAsyncResult             *res,
++                                              gchar                   **imsi,
++                                              gchar                   **gid1,
++                                              gchar                   **iccid,
++                                              GError                  **error);
 +
 +#endif /* MM_SIM_SHANNON_H */
 diff --git a/src/plugins/shannon/mm-sit-helpers.c b/src/plugins/shannon/mm-sit-helpers.c
@@ -6845,10 +7540,10 @@ index 00000000..2d682afa
 +}
 diff --git a/src/plugins/shannon/mm-sit-helpers.h b/src/plugins/shannon/mm-sit-helpers.h
 new file mode 100644
-index 00000000..b697a7b0
+index 00000000..713039fb
 --- /dev/null
 +++ b/src/plugins/shannon/mm-sit-helpers.h
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,223 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * SIT (Samsung IPC over cpif) message ids and payload decoders for the
@@ -6913,6 +7608,7 @@ index 00000000..b697a7b0
 +#define SIT_DEACT_DATA_CALL                 0x0601
 +#define SIT_GET_DATA_CALL_LIST              0x0602
 +#define SIT_SET_INITIAL_ATTACH_APN          0x0603
++#define SIT_SET_DATA_PROFILE                0x0613
 +#define SIT_IND_DATA_CALL_LIST_CHANGED      0x0604
 +#define SIT_GET_CS_REG_STATE                0x0700
 +#define SIT_GET_PS_REG_STATE                0x0701
@@ -6940,6 +7636,7 @@ index 00000000..b697a7b0
 +#define SIT_SET_IND_FILTER                  0x0928
 +#define SIT_SET_CP_CARRIER_CONFIG           0x4600
 +#define SIT_IND_CP_CARRIER_CONFIG_STATUS    0x4601
++#define SIT_IND_CP_CARRIER_SIM_INFO         0x4602
 +
 +/* SET_RADIO_POWER u32 values */
 +#define SIT_RADIO_POWER_OFF 1
@@ -7037,6 +7734,21 @@ index 00000000..b697a7b0
 +#define SIT_SMS_TPDU_MAX         244
 +#define SIT_SMS_ACK_PAYLOAD_LEN  9
 +
++/* SMS over IMS through the CP's AIMS stack (ShannonIms RilReqSendSms,
++ * RilReqSendSmsAck, RilIndNewSms): SEND = u8 smsc len, smsc[12], u8 tpdu
++ * len, tpdu[244], u8 sms type, u8 geolocation (260 B); its response = u32
++ * msg ref, u8 ack len, ack pdu[244], u32 error (0 = sent). The NEW_SMS IND
++ * has the SIT layout (u8 tpid, u8 len, pdu). ACK = u32 result (1 ok), u8
++ * tpid, u32 error. */
++#define SIT_AIMS_SEND_SMS                   0x0d1b
++#define SIT_AIMS_SEND_SMS_EXPECT_MORE       0x0d1c
++#define SIT_AIMS_SEND_SMS_ACK               0x0d1d
++#define SIT_IND_AIMS_NEW_SMS                0x0d1e
++#define SIT_IND_AIMS_NEW_SMS_STATUS_REPORT  0x0d20
++#define SIT_AIMS_SEND_SMS_PAYLOAD_LEN       260
++#define SIT_AIMS_SEND_SMS_ERROR_OFFSET      249
++#define SIT_AIMS_SMS_ACK_PAYLOAD_LEN        9
++
 +/* Fixed-size, possibly unterminated string field -> trimmed UTF-8 or NULL */
 +/* SIT_DIAL: u8 call type (1 voice), u8 0, u8 number length, number[0x52],
 + * u8 ton (0x10 international, 0x20 unknown), u8 1, u8 clir (0xff default),
@@ -7057,10 +7769,10 @@ index 00000000..b697a7b0
 +#endif /* MM_SIT_HELPERS_H */
 diff --git a/src/plugins/shannon/mm-sms-shannon.c b/src/plugins/shannon/mm-sms-shannon.c
 new file mode 100644
-index 00000000..4d04ad98
+index 00000000..5fc79cf5
 --- /dev/null
 +++ b/src/plugins/shannon/mm-sms-shannon.c
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,270 @@
 +/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 +/*
 + * SMS sent over SIT on a Shannon modem (local plugin).
@@ -7078,6 +7790,7 @@ index 00000000..4d04ad98
 +#include "mm-broadband-modem-shannon.h"
 +#include "mm-sms-shannon.h"
 +#include "mm-sit-helpers.h"
++#include "mm-shannon-ims.h"
 +
 +G_DEFINE_TYPE (MMSmsShannon, mm_sms_shannon, MM_TYPE_BASE_SMS)
 +
@@ -7089,7 +7802,8 @@ index 00000000..4d04ad98
 +/* Send the SMS: one SEND_SMS per part, EXPECT_MORE for all but the last */
 +
 +typedef struct {
-+    GList *current;
++    GList    *current;
++    gboolean  over_ims;   /* AIMS_SEND_SMS: IMS registered (no CS on e.g. Verizon) */
 +} SmsSendContext;
 +
 +static gboolean
@@ -7122,10 +7836,31 @@ index 00000000..4d04ad98
 +        return;
 +    }
 +
++    d = g_bytes_get_data (payload, &len);
++    if (ctx->over_ims) {
++        guint32 err = 0;
++
++        if (len >= SIT_AIMS_SEND_SMS_ERROR_OFFSET + 4)
++            memcpy (&err, d + SIT_AIMS_SEND_SMS_ERROR_OFFSET, 4);
++        err = GUINT32_FROM_LE (err);
++        if (err != 0) {
++            g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
++                                     "Couldn't send SMS part over IMS: error %u", err);
++            g_object_unref (task);
++            return;
++        }
++        if (len >= 4) {
++            mm_obj_dbg (self, "SMS part sent over IMS: message reference %u", d[0]);
++            mm_sms_part_set_message_reference ((MMSmsPart *) ctx->current->data, d[0]);
++        }
++        ctx->current = g_list_next (ctx->current);
++        sms_send_next_part (task);
++        return;
++    }
++
 +    /* a zero header error only means the CP handled the request: the
 +     * RP/CMS cause at 0xf9 is 0 on success (the RIL maps e.g. 98 to
 +     * RIL_E_NETWORK_ERR) */
-+    d = g_bytes_get_data (payload, &len);
 +    if (len >= 0xf9 + 4) {
 +        guint32 cause;
 +
@@ -7194,6 +7929,21 @@ index 00000000..4d04ad98
 +    req[2 + SIT_SMS_SMSC_MAX] = pdulen - msgstart;
 +    memcpy (&req[3 + SIT_SMS_SMSC_MAX], pdu + msgstart, pdulen - msgstart);
 +
++    if (ctx->over_ims) {
++        guint8 aims[SIT_AIMS_SEND_SMS_PAYLOAD_LEN] = { 0 };
++
++        /* same smsc/tpdu block without the domain byte; sms type 0 (no
++         * emergency callback mode), no geolocation */
++        memcpy (aims, req + 1, sizeof (req) - 1);
++        mm_broadband_modem_shannon_command (MM_BROADBAND_MODEM_SHANNON (self->priv->modem),
++                                            g_list_next (ctx->current) ? SIT_AIMS_SEND_SMS_EXPECT_MORE
++                                                                       : SIT_AIMS_SEND_SMS,
++                                            aims, sizeof (aims),
++                                            MM_BASE_SMS_DEFAULT_SEND_TIMEOUT,
++                                            (GAsyncReadyCallback) sms_send_ready,
++                                            task);
++        return;
++    }
 +    mm_broadband_modem_shannon_command (MM_BROADBAND_MODEM_SHANNON (self->priv->modem),
 +                                        g_list_next (ctx->current) ? SIT_SEND_SMS_EXPECT_MORE : SIT_SEND_SMS,
 +                                        req, sizeof (req),
@@ -7209,10 +7959,13 @@ index 00000000..4d04ad98
 +{
 +    GTask          *task;
 +    SmsSendContext *ctx;
++    MMShannonIms   *ims;
 +
 +    task = g_task_new (self, NULL, callback, user_data);
 +    ctx = g_new0 (SmsSendContext, 1);
 +    ctx->current = mm_base_sms_get_parts (self);
++    ims = mm_broadband_modem_shannon_peek_ims (MM_BROADBAND_MODEM_SHANNON (MM_SMS_SHANNON (self)->priv->modem));
++    ctx->over_ims = ims && mm_shannon_ims_is_registered (ims);
 +    g_task_set_task_data (task, ctx, g_free);
 +    sms_send_next_part (task);
 +}
