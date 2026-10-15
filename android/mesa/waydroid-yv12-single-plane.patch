@@ -1,25 +1,42 @@
+From c70aea6299aea2e0659ccf1c31c95be933e624f8 Mon Sep 17 00:00:00 2001
+From: noswad <noswad1211@gmail.com>
+Date: Thu, 15 Oct 2026 14:49:25 -0500
+Subject: [PATCH] egl/android: derive YV12 chroma planes from a single-plane
+ CrOS buffer
+
+Waydroid's minigbm (gbm_mesa backend) allocates HAL_PIXEL_FORMAT_YV12 as
+one R8 image and reports it through CROS_GRALLOC_DRM_GET_BUFFER_INFO as
+DRM_FORMAT_YVU420 with a single plane. dri2_from_dma_bufs() rejects a
+one-plane YVU420 import, so eglCreateImageKHR(EGL_NATIVE_BUFFER_ANDROID)
+fails without an error and SurfaceFlinger aborts ("Unable to generate
+SkImage") as soon as an app queues a YV12 buffer, e.g. a software video
+decoder or a camera preview.
+
+Android fixes the YV12 layout: the Y plane, then Cr, then Cb, with a
+chroma stride of ALIGN(y_stride / 2, 16) and h / 2 chroma rows. When a
+YV12 buffer comes back with one plane, build the Cr and Cb planes from
+that layout on the same fd.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/egl/drivers/dri2/platform_android.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
 diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
-index 7db9f6b..078b69a 100644
+index 7db9f6b..588b08a 100644
 --- a/src/egl/drivers/dri2/platform_android.c
 +++ b/src/egl/drivers/dri2/platform_android.c
-@@ -40,6 +40,7 @@
- #include <sys/types.h>
- 
- #include "util/compiler.h"
-+#include "util/macros.h"
- #include "util/libsync.h"
- #include "util/os_file.h"
- 
-@@ -90,6 +91,24 @@ droid_create_image_from_native_buffer(_EGLDisplay *disp,
+@@ -90,6 +90,25 @@ droid_create_image_from_native_buffer(_EGLDisplay *disp,
                                         &color_info))
        return NULL;
  
-+   /* Waydroid's minigbm (gbm_mesa backend) allocates YV12 as one R8 image in
-+    * the standard Android YV12 layout (Y, then Cr, then Cb; chroma stride
-+    * ALIGN(stride / 2, 16)) but reports a single plane through the CrOS API,
-+    * which no driver can import. Derive the chroma planes from that layout.
++   /* Waydroid's minigbm (gbm_mesa backend) allocates YV12 as a single R8
++    * image and reports it as one plane through the CrOS API, which no driver
++    * can import. The YV12 layout is fixed by Android (Y, then Cr, then Cb;
++    * chroma stride ALIGN(stride / 2, 16)), so derive the chroma planes.
 +    */
-+   if (buf_info.drm_fourcc == DRM_FORMAT_YVU420 && buf_info.num_planes == 1) {
++   if (buf->format == HAL_PIXEL_FORMAT_YV12 &&
++       buf_info.drm_fourcc == DRM_FORMAT_YVU420 && buf_info.num_planes == 1) {
 +      int y_stride = buf_info.strides[0];
 +      int c_stride = ALIGN_POT(y_stride / 2, 16);
 +

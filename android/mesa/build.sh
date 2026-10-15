@@ -16,7 +16,8 @@ mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 W=$OUT/.work; mkdir -p "$W"
 [ -f "$W/mesa-$MESA_VER.tar.xz" ] || curl -sfL -o "$W/mesa-$MESA_VER.tar.xz" \
 	https://archive.mesa3d.org/mesa-$MESA_VER.tar.xz
-rm -rf "$W/src"; mkdir "$W/src"
+# earlier runs leave files owned by container uids: remove inside the userns
+podman unshare rm -rf "$W/src"; mkdir "$W/src"
 tar -xf "$W/mesa-$MESA_VER.tar.xz" -C "$W/src" --strip-components=1
 for p in "$HERE"/*.patch; do (cd "$W/src" && git apply "$p"); done
 cat > "$W/cross.ini" <<INI
