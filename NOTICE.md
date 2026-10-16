@@ -19,7 +19,10 @@ These are downloaded by the APKBUILDs, not stored here.
 - **Kernel:** [github.com/m8l8th814n-eng/gs101-mainline](https://github.com/m8l8th814n-eng/gs101-mainline)
   @ 850061c79264d018317e9f849701f165e138e20c, GPL-2.0. Credit for the
   gs101 mainline work goes to its authors.
-- **Haptics driver** (patch 0028): Cirrus Logic's cs40l2x driver as
+- **v4l2loopback:** [github.com/v4l2loopback/v4l2loopback](https://github.com/v4l2loopback/v4l2loopback)
+  v0.15.4, GPL-2.0-or-later, built with the kernel package
+  (`v4l2loopback-compressed-sizeimage.diff` is our change).
+- **Haptics driver** (patch 0037): Cirrus Logic's cs40l2x driver as
   shipped in Google's [amplifiers kernel modules](https://android.googlesource.com/kernel/google-modules/amplifiers)
   @ 33976d763bc0, GPL-2.0, with our port on top. The original copyright
   notices are kept in the patch.

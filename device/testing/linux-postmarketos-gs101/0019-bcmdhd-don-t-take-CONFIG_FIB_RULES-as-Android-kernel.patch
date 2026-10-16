@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 14:28:00 -0500
+Subject: [PATCH] bcmdhd: don't take CONFIG_FIB_RULES as "Android kernel"
+
+bcmdhd/Kbuild turns on its debugability/HAL-dump flags when
+CONFIG_FIB_RULES is set, as a proxy for an Android kernel. Policy
+routing (IP_MULTIPLE_TABLES, which Waydroid's netd needs) selects
+FIB_RULES, and the build then broke (DHD_PKT_LOGGING_DBGRING without
+DHD_PKT_LOGGING). Key them on an explicit BCMDHD_ANDROID_DEBUGABILITY
+instead.
+---
+ bcmdhd/Kbuild | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/bcmdhd/Kbuild b/bcmdhd/Kbuild
+index 06a41dcad..4d5333062 100644
+--- a/bcmdhd/Kbuild
++++ b/bcmdhd/Kbuild
+@@ -178,7 +178,7 @@ DHDCFLAGS += -DRTT_GEOFENCE_INTERVAL
+ DHDCFLAGS += -DRTT_GEOFENCE_CONT
+ 
+ #Debug flag
+-ifneq ($(CONFIG_FIB_RULES),)
++ifneq ($(BCMDHD_ANDROID_DEBUGABILITY),)
+ DHDCFLAGS += -DDEBUGABILITY
+ DHDCFLAGS += -DDEBUGABILITY_DISABLE_MEMDUMP
+ DHDCFLAGS += -DDHD_DEBUGABILITY_LOG_DUMP_RING
+@@ -306,7 +306,7 @@ ifneq ($(CONFIG_BCMDHD_PCIE),)
+ 	DHDCFLAGS += -DWBRC
+ endif
+ 
+-ifneq ($(CONFIG_FIB_RULES),)
++ifneq ($(BCMDHD_ANDROID_DEBUGABILITY),)
+ # Debugability
+ # HAL File dump is supported only for iptable builds(brcm_wlan_iptables_defconfig)
+ ifneq ($(CONFIG_SOC_GOOGLE),)

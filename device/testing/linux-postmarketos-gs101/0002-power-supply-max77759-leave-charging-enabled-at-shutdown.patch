@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 14:29:59 -0500
+Subject: [PATCH] power: supply: max77759: leave charging enabled at shutdown
+
+CHG_CNFG_00 survives power-off; the driver leaves it in MODE_OFF when
+unplugged, so the powered-off phone would not charge. Restore
+charge+buck mode with a 500 mA input limit at shutdown.
+---
+ drivers/power/supply/max77759_charger.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/drivers/power/supply/max77759_charger.c b/drivers/power/supply/max77759_charger.c
+index 4fc3b0b95..f818222ae 100644
+--- a/drivers/power/supply/max77759_charger.c
++++ b/drivers/power/supply/max77759_charger.c
+@@ -774,6 +774,25 @@ static int max77759_charger_probe(struct platform_device *pdev)
+ 	return max77759_init_irqhandler(chg);
+ }
+ 
++/*
++ * The charger keeps CHG_CNFG_00 while the SoC is off. Probe and cable
++ * removal leave it in MODE_OFF, so a phone shut down while unplugged would
++ * not charge from a cable inserted later. Hand it back in the charge+buck
++ * mode the bootloader expects, with a USB 2.0-safe input limit.
++ */
++static void max77759_charger_shutdown(struct platform_device *pdev)
++{
++	struct max77759_charger *chg = platform_get_drvdata(pdev);
++
++	if (!chg)
++		return;
++
++	cancel_delayed_work_sync(&chg->psy_work);
++	set_input_current_limit(chg, 500000);
++	charger_set_mode(chg, MAX77759_CHGR_MODE_OFF);
++	charger_set_mode(chg, MAX77759_CHGR_MODE_CHG_BUCK_ON);
++}
++
+ static const struct platform_device_id max77759_charger_id[] = {
+ 	{ .name = "max77759-charger" },
+ 	{ }
+@@ -786,6 +805,7 @@ static struct platform_driver max77759_charger_driver = {
+ 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+ 	},
+ 	.probe = max77759_charger_probe,
++	.shutdown = max77759_charger_shutdown,
+ 	.id_table = max77759_charger_id,
+ };
+ module_platform_driver(max77759_charger_driver);

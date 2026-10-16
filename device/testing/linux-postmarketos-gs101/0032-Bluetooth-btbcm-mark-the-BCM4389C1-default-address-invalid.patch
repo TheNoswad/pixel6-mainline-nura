@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 02:05:41 -0500
+Subject: [PATCH] Bluetooth: btbcm: mark the BCM4389C1 default address invalid
+
+The Pixel 6 (gs101 oriole) BCM4389C1 patch RAM file sets the controller
+address to 43:89:00:00:76:93 in its BRCMcfg block, so every phone loaded
+with it reports the same address. Treat it like the other Broadcom
+defaults: the controller then comes up unconfigured (no local-bd-address
+in the DT) and userspace sets the real address, which the bootloader
+passes in /chosen/config/bt_addr, through MGMT Set Public Address.
+---
+ drivers/bluetooth/btbcm.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/bluetooth/btbcm.c b/drivers/bluetooth/btbcm.c
+index 576635136..366419149 100644
+--- a/drivers/bluetooth/btbcm.c
++++ b/drivers/bluetooth/btbcm.c
+@@ -31,6 +31,7 @@
+ #define BDADDR_BCM4334B0 (&(bdaddr_t) {{0x00, 0x00, 0x00, 0xb0, 0x34, 0x43}})
+ #define BDADDR_BCM4345C5 (&(bdaddr_t) {{0xac, 0x1f, 0x00, 0xc5, 0x45, 0x43}})
+ #define BDADDR_BCM43341B (&(bdaddr_t) {{0xac, 0x1f, 0x00, 0x1b, 0x34, 0x43}})
++#define BDADDR_BCM4389C1 (&(bdaddr_t) {{0x93, 0x76, 0x00, 0x00, 0x89, 0x43}})
+ 
+ #define BCM_FW_NAME_LEN			64
+ #define BCM_FW_NAME_COUNT_MAX		5
+@@ -120,6 +121,10 @@ int btbcm_check_bdaddr(struct hci_dev *hdev)
+ 	 *
+ 	 * The address AA:AA:AA:AA:AA:AA indicates a BCM43430A1 controller
+ 	 * with no configured address.
++	 *
++	 * The address 43:89:00:00:76:93 indicates a BCM4389C1 controller
++	 * with no configured address. It is set by the BRCMcfg block of the
++	 * patch RAM file, so every controller loaded with it reports it.
+ 	 */
+ 	if (!bacmp(&bda->bdaddr, BDADDR_BCM20702A0) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM20702A1) ||
+@@ -130,7 +135,8 @@ int btbcm_check_bdaddr(struct hci_dev *hdev)
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM4345C5) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM43430A0) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM43430A1) ||
+-	    !bacmp(&bda->bdaddr, BDADDR_BCM43341B)) {
++	    !bacmp(&bda->bdaddr, BDADDR_BCM43341B) ||
++	    !bacmp(&bda->bdaddr, BDADDR_BCM4389C1)) {
+ 		/* Try falling back to BDADDR EFI variable */
+ 		if (btbcm_set_bdaddr_from_efi(hdev) != 0) {
+ 			bt_dev_info(hdev, "BCM: Using default device address (%pMR)",

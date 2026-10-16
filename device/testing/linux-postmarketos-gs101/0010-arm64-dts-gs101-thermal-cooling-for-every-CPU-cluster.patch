@@ -1,0 +1,244 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 21:40:50 -0500
+Subject: [PATCH] arm64: dts: gs101: thermal cooling for every CPU cluster
+
+cpu-big-thermal (TMU probe 0) only throttled cpu6, so an all-core build
+while charging reached its 105 C critical trip and the kernel shut the
+phone down.
+
+Per-cluster load tests (kernel r8, 2026-10-08) mapped the TMU probes:
+X1 load heats probes 6-9 fastest (probe 9 hottest, ~10 C above probe 0,
+~35 C/s), A76 load heats probes 1-5 (probe 3 hottest), A55 load barely
+moves any probe; 12-15 are uncalibrated.
+
+- cpu0 (A55) and cpu4 (A76) get #cooling-cells; probe 0 throttles all
+  three clusters at 85 C and keeps its 105 C critical trip.
+- cpu-x1-thermal on probe 9, polled every 100 ms: X1 from 75 C, all
+  clusters from 85 C, with minimum cooling states at 85/95 C so the
+  first poll over the trip cuts the clocks at once. Critical 110 C.
+- cpu-mid-thermal on probe 3 for the A76.
+- The other calibrated probes as unpolled zones without trips.
+---
+ arch/arm64/boot/dts/exynos/google/gs101.dtsi | 192 +++++++++++++++++++
+ 1 file changed, 192 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101.dtsi b/arch/arm64/boot/dts/exynos/google/gs101.dtsi
+index b641d1682..e6fbc285d 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101.dtsi
++++ b/arch/arm64/boot/dts/exynos/google/gs101.dtsi
+@@ -81,6 +81,7 @@ cpu0: cpu@0 {
+ 			capacity-dmips-mhz = <250>;
+ 			dynamic-power-coefficient = <70>;
+ 			operating-points-v2 = <&cpucl0_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		cpu1: cpu@100 {
+@@ -129,6 +130,7 @@ cpu4: cpu@400 {
+ 			capacity-dmips-mhz = <620>;
+ 			dynamic-power-coefficient = <284>;
+ 			operating-points-v2 = <&cpucl1_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		cpu5: cpu@500 {
+@@ -2608,8 +2610,198 @@ map0 {
+ 					trip = <&cpu_big_alert>;
+ 					cooling-device = <&cpu6 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+ 				};
++
++				map1 {
++					trip = <&cpu_big_alert>;
++					cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map2 {
++					trip = <&cpu_big_alert>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
+ 			};
+ 		};
++
++		/*
++		 * Probe 9 is the X1 hotspot: under X1-only load it runs ~10 C
++		 * above sensor 0 and rises ~35 C/s, so poll it every 100 ms
++		 * and give the hotter trips a minimum cooling state (step_wise
++		 * jumps straight to it instead of one step per rising poll).
++		 */
++		cpu-x1-thermal {
++			polling-delay-passive = <100>;
++			polling-delay = <100>;
++			thermal-sensors = <&tmu_cpu 9>;
++
++			trips {
++				cpu_x1_warm: warm {
++					temperature = <75000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				cpu_x1_hot: hot {
++					temperature = <85000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				cpu_x1_vhot: very-hot {
++					temperature = <95000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				cpu_x1_crit: critical {
++					temperature = <110000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map0 {
++					trip = <&cpu_x1_warm>;
++					cooling-device = <&cpu6 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map1 {
++					trip = <&cpu_x1_hot>;
++					cooling-device = <&cpu6 8 THERMAL_NO_LIMIT>;
++				};
++
++				map2 {
++					trip = <&cpu_x1_hot>;
++					cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map3 {
++					trip = <&cpu_x1_hot>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map4 {
++					trip = <&cpu_x1_vhot>;
++					cooling-device = <&cpu6 12 THERMAL_NO_LIMIT>;
++				};
++
++				map5 {
++					trip = <&cpu_x1_vhot>;
++					cooling-device = <&cpu4 6 THERMAL_NO_LIMIT>;
++				};
++
++				map6 {
++					trip = <&cpu_x1_vhot>;
++					cooling-device = <&cpu0 4 THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++
++		/* Probe 3 is the hottest under A76-only load. */
++		cpu-mid-thermal {
++			polling-delay-passive = <100>;
++			polling-delay = <250>;
++			thermal-sensors = <&tmu_cpu 3>;
++
++			trips {
++				cpu_mid_hot: hot {
++					temperature = <85000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				cpu_mid_vhot: very-hot {
++					temperature = <95000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				cpu_mid_crit: critical {
++					temperature = <110000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map0 {
++					trip = <&cpu_mid_hot>;
++					cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map1 {
++					trip = <&cpu_mid_hot>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map2 {
++					trip = <&cpu_mid_vhot>;
++					cooling-device = <&cpu4 6 THERMAL_NO_LIMIT>;
++				};
++
++				map3 {
++					trip = <&cpu_mid_vhot>;
++					cooling-device = <&cpu6 12 THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++
++		/* Read-only zones (no polling, no trips) for the other
++		 * calibrated TMU probes; 12-15 read as uncalibrated. */
++		tmu-probe1-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 1>;
++		};
++
++		tmu-probe2-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 2>;
++		};
++
++		tmu-probe4-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 4>;
++		};
++
++		tmu-probe5-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 5>;
++		};
++
++		tmu-probe6-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 6>;
++		};
++
++		tmu-probe7-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 7>;
++		};
++
++		tmu-probe8-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 8>;
++		};
++
++		tmu-probe10-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 10>;
++		};
++
++		tmu-probe11-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <0>;
++			thermal-sensors = <&tmu_cpu 11>;
++		};
+ 	};
+ };
+ 

@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 20:20:05 -0500
+Subject: [PATCH] power: supply: max77759: charge at 500 mA from Default USB
+ sources
+
+tcpm gives CURRENT_MAX=0 for a Default-Rp source when the TCPC has no
+BC1.2, so the charger never turned its buck on from a PC port.
+---
+ drivers/power/supply/max77759_charger.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/power/supply/max77759_charger.c b/drivers/power/supply/max77759_charger.c
+index 62f9e23d6..4fc3b0b95 100644
+--- a/drivers/power/supply/max77759_charger.c
++++ b/drivers/power/supply/max77759_charger.c
+@@ -619,6 +619,14 @@ static void psy_work_item(struct work_struct *work)
+ 		goto err;
+ 	}
+ 
++	/*
++	 * tcpm reports 0 for a Default-USB-power source (plain PC port or
++	 * USB-A charger) when the TCPC has no BC1.2 detection, which would
++	 * leave the buck off. Fall back to the USB 2.0 default of 500 mA.
++	 */
++	if (online.intval && !current_limit.intval)
++		current_limit.intval = 500000;
++
+ 	if (online.intval && current_limit.intval) {
+ 		ret = set_input_current_limit(chg, current_limit.intval);
+ 		if (ret) {

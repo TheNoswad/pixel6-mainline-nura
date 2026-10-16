@@ -7,7 +7,9 @@ and Waydroid with hardware GL.
 
 **Built on M8's work.** The kernel is
 [M8's gs101-mainline tree](https://github.com/m8l8th814n-eng/gs101-mainline),
-which did the mainline gs101 bring-up, and the modem boots with M8's
+which did the mainline gs101 bring-up and ported nearly every driver the
+phone uses (AoC audio, trusty, modem, Wi-Fi, GNSS, display, cameras, ...;
+the touchscreen port is ninelore's). The modem boots with M8's
 reverse-engineered [tinycbd](https://github.com/m8l8th814n-eng/tinycbd).
 This repository is packaging and fixes on top of that. M8 also has
 [Mesa with Vulkan](https://github.com/m8l8th814n-eng/mesa-gs101) and
@@ -80,7 +82,7 @@ it is an overlay applied onto one pinned pmaports commit (`UPSTREAM`).
 | Path | What |
 |---|---|
 | `device/testing/device-google-oriole` | Device package: udev, systemd units, audio (UCM), stock partitions read-only |
-| `device/testing/linux-postmarketos-gs101` | Kernel: [gs101-mainline](https://github.com/m8l8th814n-eng/gs101-mainline) @ 850061c7 + patches 0005-0030 |
+| `device/testing/linux-postmarketos-gs101` | Kernel: [gs101-mainline](https://github.com/m8l8th814n-eng/gs101-mainline) @ 850061c7 + 38 patches |
 | `device/testing/firmware-google-oriole` | Firmware, **extracted at build time from Google's factory image**; nothing proprietary is in this repository |
 | `main/oriole-modem` | Modem bring-up (Shannon 5123): CP boot, RFS server, carrier config |
 | `main/oriole-sensors` | Sensors through the AoC sensor hub (USF), iio-sensor-proxy replacement, auto-brightness |
@@ -95,10 +97,12 @@ it is an overlay applied onto one pinned pmaports commit (`UPSTREAM`).
 
 ## Credits
 
-The kernel is [M8's gs101-mainline tree](https://github.com/m8l8th814n-eng/gs101-mainline),
-which did the hard part of mainline gs101 support. The modem boots with
-M8's [tinycbd](https://github.com/m8l8th814n-eng/tinycbd), and the audio
-bring-up used M8's [gs101-miscscripts](https://github.com/m8l8th814n-eng/gs101-miscscripts).
+The kernel is [M8's gs101-mainline tree](https://github.com/m8l8th814n-eng/gs101-mainline).
+M8 did the mainline gs101 support and ported almost every driver in it,
+including AoC and the audio path, trusty, gsa, the cpif modem driver,
+bcmdhd, GNSS and the display; the touchscreen (fts) port is ninelore's.
+The modem boots with M8's [tinycbd](https://github.com/m8l8th814n-eng/tinycbd),
+and the audio setup follows M8's [gs101-miscscripts](https://github.com/m8l8th814n-eng/gs101-miscscripts).
 Thanks to the
 postmarketOS, Alpine, Mesa, libcamera, ModemManager and Waydroid projects
 whose work all of this sits on.

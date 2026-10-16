@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 17:40:00 -0500
+Subject: [PATCH] aoc_channel_dev: don't take the list head as the doorbell
+ channel
+
+aocc_sh_mem_doorbell_probe() picks the first channel device with
+list_entry(aocc_devices_list.next, ...). When usf_sh_mem_doorbell probes
+before any channel service, the list is empty and that yields the list
+head itself (never NULL), so the doorbell setup then writes
+sh_mem_doorbell_count/available and INIT_WORK into static memory next to
+aocc_devices_list. Use list_first_entry_or_null(). The setup is retried
+on every probe, so it still happens once a channel shows up.
+
+Needed for the USF sensor hub (/dev/acd-com.google.usf).
+---
+ aoc/aoc_channel_dev.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/aoc/aoc_channel_dev.c b/aoc/aoc_channel_dev.c
+index 5c1671a79..35f0ebf98 100644
+--- a/aoc/aoc_channel_dev.c
++++ b/aoc/aoc_channel_dev.c
+@@ -737,8 +737,12 @@ static void aocc_sh_mem_doorbell_probe(struct aoc_service_dev *dev)
+ 	}
+ 
+ 	/* Use the first channel device with the shared memory doorbell. */
++	/*
++	 * list_entry() on an empty list returns the list head itself, which
++	 * is not NULL; the doorbell service can probe before any channel.
++	 */
+ 	sh_mem_doorbell_channel_device =
+-		list_entry(aocc_devices_list.next, struct aocc_device_entry, list);
++		list_first_entry_or_null(&aocc_devices_list, struct aocc_device_entry, list);
+ 
+ 	/*
+ 	 * If both a shared memory doorbell service device and a channel device

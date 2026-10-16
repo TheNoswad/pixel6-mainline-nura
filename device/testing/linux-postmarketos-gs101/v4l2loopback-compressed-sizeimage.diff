@@ -1,0 +1,22 @@
+--- a/v4l2loopback.c	2026-06-24 08:50:52.000000000 -0500
++++ b/v4l2loopback.c	2026-10-15 13:55:00.413102092 -0500
+@@ -569,9 +569,19 @@
+ 		if (V4L2_FIELD_ANY == fmt->fmt.pix_mp.field)
+ 			fmt->fmt.pix_mp.field = V4L2_FIELD_NONE;
+ 	} else {
++		const struct v4l2l_format *format =
++			format_by_fourcc(fmt0.fmt.pix.pixelformat);
++
+ 		bytesperline = fmt->fmt.pix.bytesperline;
+ 		sizeimage = fmt->fmt.pix.sizeimage;
+ 
++		/* compressed frames: the writer knows its maximum frame size
++		 * better than our worst-case guess (some readers, e.g. Android's
++		 * external camera HAL, reject buffers above width*height*2) */
++		if (format && (format->flags & FORMAT_FLAGS_COMPRESSED) &&
++		    sizeimage && sizeimage < fmt0.fmt.pix.sizeimage)
++			fmt0.fmt.pix.sizeimage = sizeimage;
++
+ 		*fmt = fmt0;
+ 
+ 		if (!fmt->fmt.pix.bytesperline)

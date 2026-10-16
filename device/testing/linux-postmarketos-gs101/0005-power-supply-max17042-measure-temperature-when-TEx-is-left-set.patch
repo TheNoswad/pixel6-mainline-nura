@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 18:15:53 -0500
+Subject: [PATCH] power: supply: max17042: measure temperature when TEx is left
+ set
+
+The max77759 fuel gauge on Pixel 6 comes up with Config.TEx set, so
+Temp holds whatever the host last wrote (22.0 C) and never changes.
+Nothing in Linux writes it. Clear TEx so the gauge converts the battery
+thermistor itself; verified on oriole: idle ~44 C, falls 4.4 C in 3 min
+in a fridge while the SoC TMU moves 1 C.
+---
+ drivers/power/supply/max17042_battery.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/power/supply/max17042_battery.c b/drivers/power/supply/max17042_battery.c
+index d409d2f0d..61d447fe9 100644
+--- a/drivers/power/supply/max17042_battery.c
++++ b/drivers/power/supply/max17042_battery.c
+@@ -38,6 +38,7 @@
+ 
+ /* Interrupt mask bits */
+ #define CFG_ALRT_BIT_ENBL	(1 << 2)
++#define CFG_TEX_BIT		(1 << 8)
+ #define CFG2_DSOCI_BIT_ENBL	(1 << 7)
+ 
+ #define VFSOC0_LOCK		0x0000
+@@ -1201,6 +1202,18 @@ static int max17042_probe(struct i2c_client *client, struct device *dev, int irq
+ 	dev_dbg(dev, "task period: %#.4x (%d)\n", chip->task_period,
+ 		chip->task_period);
+ 
++	/*
++	 * Config.TEx makes the gauge wait for the host to write Temp. This
++	 * driver never does, so the reported temperature would stay frozen at
++	 * whatever was last written (22.0 C on Pixel 6, where firmware leaves
++	 * TEx set). Let the gauge convert its thermistor input instead.
++	 */
++	regmap_read(chip->regmap, MAX17042_CONFIG, &val);
++	if (val & CFG_TEX_BIT) {
++		dev_info(dev, "clearing Config.TEx, measuring temperature\n");
++		regmap_update_bits(chip->regmap, MAX17042_CONFIG, CFG_TEX_BIT, 0);
++	}
++
+ 	chip->battery = devm_power_supply_register(dev, max17042_desc,
+ 						   &psy_cfg);
+ 	if (IS_ERR(chip->battery))

@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 17:40:01 -0500
+Subject: [PATCH] arm64: dts: gs101-pixel: keep the GNSS LDOs on
+
+The BCM4775 GNSS receiver on spi10 is fed by s2mpg11 ldo9s (core),
+ldo10s (RF) and ldo11s (aux). Nothing claims them, so the regulator core
+switches them off at late init and the receiver never answers MCU_REQ.
+The stock device tree marks all three regulator-always-on (the vendor
+driver has no regulator handling and parks the chip with nstandby);
+do the same. With them on, MCU_RESP rises as soon as nstandby is
+released.
+---
+ arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi b/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
+index 095291b34..05a9494df 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
++++ b/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
+@@ -1059,18 +1059,21 @@ ldo9s {
+ 				regulator-name = "vdd_gnss";
+ 				regulator-min-microvolt = <725000>;
+ 				regulator-max-microvolt = <1300000>;
++				regulator-always-on;
+ 			};
+ 
+ 			ldo10s {
+ 				regulator-name = "vdd_gnss_rf";
+ 				regulator-min-microvolt = <1600000>;
+ 				regulator-max-microvolt = <1950000>;
++				regulator-always-on;
+ 			};
+ 
+ 			ldo11s {
+ 				regulator-name = "vdd_gnss_aux";
+ 				regulator-min-microvolt = <1600000>;
+ 				regulator-max-microvolt = <1950000>;
++				regulator-always-on;
+ 			};
+ 
+ 			/* ldo12s is unused */

@@ -1,0 +1,408 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 17:53:09 -0500
+Subject: [PATCH] power: supply: max77759: step charging by battery temperature
+
+The charger used one fixed current and float voltage at any battery
+temperature, including below 0 C. Its built-in JEITA is enabled but the
+fuel gauge thresholds it uses are at their -128/127 C defaults, so it
+never acts.
+
+Optionally take a step-charging table in the format of Google's
+google_charger (google,chg-temp-limits, -cv-limits, -cc-limits). While a
+charger is attached, poll the battery's temperature, voltage and current
+every 30 s, pick the band and voltage tier and set the charge current
+(capped at the monitored battery's constant-charge-current-max) and the
+tier's float voltage. Outside the bands, or in a tier with no current,
+keep the buck on but stop charging (mode 0x4) and report COLD/COOL/WARM/
+OVERHEAT health and NOT_CHARGING status.
+
+Also report constant_charge_voltage_max in uV, not mV.
+
+Policy and table from Google's GPL raviole kernel (provided by M8).
+---
+ drivers/power/supply/max77759_charger.c | 269 +++++++++++++++++++++++-
+ include/linux/mfd/max77759.h            |   1 +
+ 2 files changed, 267 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/max77759_charger.c b/drivers/power/supply/max77759_charger.c
+index f818222ae..f2088f166 100644
+--- a/drivers/power/supply/max77759_charger.c
++++ b/drivers/power/supply/max77759_charger.c
+@@ -30,6 +30,12 @@
+ #define MAX_NUM_RETRIES				3
+ #define PSY_WORK_RETRY_DELAY_MS			10
+ 
++/* Temperature-dependent step charging */
++#define TEMP_WORK_INTERVAL_MS			30000
++#define CV_TIER_MARGIN_UV			20000
++#define CV_TIER_DEBOUNCE			3
++#define ROOM_TEMP_DECI_C			250
++
+ #define FOREACH_IRQ(S)			\
+ 	S(AICL),			\
+ 	S(CHGIN),			\
+@@ -84,6 +90,25 @@ struct max77759_charger {
+ 	int irqs[NUM_IRQS];
+ 	struct mutex lock; /* protects the state below */
+ 	enum max77759_chgr_mode mode;
++
++	/* Step charging by battery temperature, see max77759_temp_work() */
++	struct power_supply *bat_psy;
++	struct delayed_work temp_work;
++	int *temp_limits;	/* tenths of a degree C, n_temps entries */
++	u32 *cv_limits;		/* uV, n_tiers entries */
++	u32 *cc_limits;		/* % of capacity, (n_temps - 1) x n_tiers */
++	int n_temps;
++	int n_tiers;		/* usable tiers, up to fv_max_mv */
++	int cc_stride;		/* tiers per cc_limits row */
++	u32 capacity_uah;
++	u32 cc_max_ua;
++	u32 fv_max_mv;
++	int tier;
++	int tier_debounce;
++	int band;
++	int cc_ua;		/* last current set, to log changes */
++	int temp_health;	/* POWER_SUPPLY_HEALTH_UNKNOWN when charging is allowed */
++	bool charge_inhibit;
+ };
+ 
+ static inline int unlock_prot_regs(struct max77759_charger *chg, bool unlock)
+@@ -122,7 +147,8 @@ static int get_online(struct max77759_charger *chg)
+ 	guard(mutex)(&chg->lock);
+ 
+ 	return (val & MAX77759_CHGR_REG_CHG_DETAILS_02_CHGIN_STS) &&
+-		(chg->mode == MAX77759_CHGR_MODE_CHG_BUCK_ON);
++		(chg->mode == MAX77759_CHGR_MODE_CHG_BUCK_ON ||
++		 chg->mode == MAX77759_CHGR_MODE_BUCK_ON);
+ }
+ 
+ static int get_status(struct max77759_charger *chg)
+@@ -130,6 +156,10 @@ static int get_status(struct max77759_charger *chg)
+ 	u32 val;
+ 	int ret;
+ 
++	scoped_guard(mutex, &chg->lock)
++		if (chg->mode == MAX77759_CHGR_MODE_BUCK_ON)
++			return POWER_SUPPLY_STATUS_NOT_CHARGING;
++
+ 	ret = regmap_read(chg->regmap, MAX77759_CHGR_REG_CHG_DETAILS_01, &val);
+ 	if (ret)
+ 		return ret;
+@@ -255,6 +285,10 @@ static int get_health(struct max77759_charger *chg)
+ 		ret = get_chg_health(chg);
+ 		if (ret < 0 || ret != POWER_SUPPLY_HEALTH_GOOD)
+ 			return ret;
++
++		scoped_guard(mutex, &chg->lock)
++			if (chg->temp_health != POWER_SUPPLY_HEALTH_UNKNOWN)
++				return chg->temp_health;
+ 	}
+ 
+ 	return get_batt_health(chg);
+@@ -397,6 +431,8 @@ static int max77759_charger_get_property(struct power_supply *psy,
+ 		break;
+ 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+ 		ret = get_float_voltage(chg);
++		if (ret > 0)
++			ret *= 1000;	/* mV to uV */
+ 		break;
+ 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+ 		ret = get_input_current_limit(chg);
+@@ -427,9 +463,14 @@ static int charger_set_mode(struct max77759_charger *chg,
+ 	if (chg->mode == mode)
+ 		return 0;
+ 
++	/* Charging can be switched on and off while the buck stays on */
+ 	if ((mode == MAX77759_CHGR_MODE_CHG_BUCK_ON ||
++	     mode == MAX77759_CHGR_MODE_BUCK_ON ||
+ 	     mode == MAX77759_CHGR_MODE_OTG_BOOST_ON) &&
+-	    chg->mode != MAX77759_CHGR_MODE_OFF) {
++	    chg->mode != MAX77759_CHGR_MODE_OFF &&
++	    !(mode != MAX77759_CHGR_MODE_OTG_BOOST_ON &&
++	      (chg->mode == MAX77759_CHGR_MODE_CHG_BUCK_ON ||
++	       chg->mode == MAX77759_CHGR_MODE_BUCK_ON))) {
+ 		dev_err(chg->dev, "Invalid mode transition from %d to %d\n",
+ 			chg->mode, mode);
+ 		return -EINVAL;
+@@ -540,6 +581,196 @@ static int max77759_init_irqhandler(struct max77759_charger *chg)
+ 	return 0;
+ }
+ 
++/*
++ * Optional step-charging table, in the format of Google's charger driver:
++ * google,chg-temp-limits are the battery temperature band edges (tenths of
++ * a degree C), google,chg-cv-limits the float voltage of each tier (uV) and
++ * google,chg-cc-limits one row per band of the charge current of each tier,
++ * in percent of the battery capacity. Charging stops outside the bands and
++ * in tiers with a zero current.
++ */
++static int max77759_parse_step_charging(struct max77759_charger *chg)
++{
++	struct device *dev = chg->dev;
++	int n_temps, n_tiers, n_cc, ret;
++
++	n_temps = device_property_count_u32(dev, "google,chg-temp-limits");
++	if (n_temps <= 0)
++		return 0;
++
++	n_tiers = device_property_count_u32(dev, "google,chg-cv-limits");
++	n_cc = device_property_count_u32(dev, "google,chg-cc-limits");
++	if (n_temps < 2 || n_tiers <= 0 || n_cc != (n_temps - 1) * n_tiers ||
++	    !chg->capacity_uah)
++		return dev_err_probe(dev, -EINVAL,
++				     "invalid step charging table\n");
++
++	chg->temp_limits = devm_kcalloc(dev, n_temps, sizeof(u32), GFP_KERNEL);
++	chg->cv_limits = devm_kcalloc(dev, n_tiers, sizeof(u32), GFP_KERNEL);
++	chg->cc_limits = devm_kcalloc(dev, n_cc, sizeof(u32), GFP_KERNEL);
++	if (!chg->temp_limits || !chg->cv_limits || !chg->cc_limits)
++		return -ENOMEM;
++
++	ret = device_property_read_u32_array(dev, "google,chg-temp-limits",
++					     (u32 *)chg->temp_limits, n_temps);
++	if (!ret)
++		ret = device_property_read_u32_array(dev, "google,chg-cv-limits",
++						     chg->cv_limits, n_tiers);
++	if (!ret)
++		ret = device_property_read_u32_array(dev, "google,chg-cc-limits",
++						     chg->cc_limits, n_cc);
++	if (ret)
++		return dev_err_probe(dev, ret, "invalid step charging table\n");
++
++	/* Tiers above the battery's maximum float voltage are never used */
++	while (n_tiers > 1 && chg->cv_limits[n_tiers - 1] / 1000 > chg->fv_max_mv)
++		n_tiers--;
++
++	chg->cc_stride = n_cc / (n_temps - 1);
++	chg->n_temps = n_temps;
++	chg->n_tiers = n_tiers;
++	return 0;
++}
++
++static int max77759_cc_limit(struct max77759_charger *chg, int band, int tier)
++{
++	u64 cc = (u64)chg->capacity_uah *
++		 chg->cc_limits[band * chg->cc_stride + tier];
++
++	return min_t(u64, div_u64(cc, 100), chg->cc_max_ua);
++}
++
++static int max77759_find_bat_psy(struct power_supply *psy, void *data)
++{
++	struct max77759_charger *chg = data;
++	int i;
++
++	if (psy->desc->type != POWER_SUPPLY_TYPE_BATTERY)
++		return 0;
++
++	for (i = 0; i < psy->num_supplies; i++) {
++		if (!strcmp(psy->supplied_from[i], chg->psy->desc->name)) {
++			chg->bat_psy = power_supply_get_by_name(psy->desc->name);
++			return 1;
++		}
++	}
++
++	return 0;
++}
++
++static void max77759_put_bat_psy(void *data)
++{
++	struct max77759_charger *chg = data;
++
++	if (chg->bat_psy)
++		power_supply_put(chg->bat_psy);
++}
++
++static void max77759_set_charge_inhibit(struct max77759_charger *chg,
++					bool inhibit, int health)
++{
++	enum max77759_chgr_mode mode;
++
++	scoped_guard(mutex, &chg->lock) {
++		chg->temp_health = health;
++		if (chg->charge_inhibit == inhibit)
++			return;
++		chg->charge_inhibit = inhibit;
++		mode = chg->mode;
++	}
++
++	dev_info(chg->dev, "battery charging %s\n",
++		 inhibit ? "stopped by temperature" : "resumed");
++
++	if (mode == MAX77759_CHGR_MODE_CHG_BUCK_ON ||
++	    mode == MAX77759_CHGR_MODE_BUCK_ON)
++		charger_set_mode(chg, inhibit ? MAX77759_CHGR_MODE_BUCK_ON :
++					MAX77759_CHGR_MODE_CHG_BUCK_ON);
++	power_supply_changed(chg->psy);
++}
++
++/*
++ * While a charger is attached, follow the battery temperature: pick the
++ * band, then charge each voltage tier at its current until the battery
++ * reaches the tier voltage and the current tapers to what the next tier
++ * allows.
++ */
++static void max77759_temp_work(struct work_struct *work)
++{
++	struct max77759_charger *chg =
++		container_of(work, struct max77759_charger, temp_work.work);
++	union power_supply_propval temp, vbat, ibat;
++	int band, cc, next_cc, health;
++
++	if (!chg->bat_psy) {
++		power_supply_for_each_psy(chg, max77759_find_bat_psy);
++		if (!chg->bat_psy)
++			goto out;
++	}
++
++	if (power_supply_get_property(chg->bat_psy, POWER_SUPPLY_PROP_TEMP,
++				      &temp) ||
++	    power_supply_get_property(chg->bat_psy,
++				      POWER_SUPPLY_PROP_VOLTAGE_NOW, &vbat) ||
++	    power_supply_get_property(chg->bat_psy,
++				      POWER_SUPPLY_PROP_CURRENT_NOW, &ibat))
++		goto out;
++
++	if (temp.intval < chg->temp_limits[0] ||
++	    temp.intval >= chg->temp_limits[chg->n_temps - 1]) {
++		health = temp.intval < chg->temp_limits[0] ?
++			 POWER_SUPPLY_HEALTH_COLD : POWER_SUPPLY_HEALTH_OVERHEAT;
++		max77759_set_charge_inhibit(chg, true, health);
++		goto out;
++	}
++
++	for (band = 0; temp.intval >= chg->temp_limits[band + 1]; band++)
++		;
++
++	if (chg->tier < 0) {
++		/* Just plugged in: start at the tier the battery is in */
++		for (chg->tier = 0; chg->tier < chg->n_tiers - 1; chg->tier++)
++			if (vbat.intval < chg->cv_limits[chg->tier])
++				break;
++		chg->tier_debounce = 0;
++	} else if (chg->tier < chg->n_tiers - 1) {
++		next_cc = max77759_cc_limit(chg, band, chg->tier + 1);
++		if (next_cc && vbat.intval >= chg->cv_limits[chg->tier] -
++					      CV_TIER_MARGIN_UV &&
++		    ibat.intval <= next_cc) {
++			if (++chg->tier_debounce >= CV_TIER_DEBOUNCE) {
++				chg->tier++;
++				chg->tier_debounce = 0;
++			}
++		} else {
++			chg->tier_debounce = 0;
++		}
++	}
++
++	cc = max77759_cc_limit(chg, band, chg->tier);
++	if (!cc) {
++		max77759_set_charge_inhibit(chg, true,
++					    temp.intval < ROOM_TEMP_DECI_C ?
++					    POWER_SUPPLY_HEALTH_COOL :
++					    POWER_SUPPLY_HEALTH_WARM);
++		goto out;
++	}
++
++	if (band != chg->band || cc != chg->cc_ua)
++		dev_info(chg->dev, "battery %d.%d C: charging at %d mA to %u mV\n",
++			 temp.intval / 10, abs(temp.intval % 10), cc / 1000,
++			 chg->cv_limits[chg->tier] / 1000);
++	chg->band = band;
++	chg->cc_ua = cc;
++	set_fast_charge_current_limit(chg, cc);
++	set_float_voltage_limit(chg, chg->cv_limits[chg->tier] / 1000);
++	max77759_set_charge_inhibit(chg, false, POWER_SUPPLY_HEALTH_UNKNOWN);
++
++out:
++	schedule_delayed_work(&chg->temp_work,
++			      msecs_to_jiffies(TEMP_WORK_INTERVAL_MS));
++}
++
+ static int max77759_charger_init(struct max77759_charger *chg)
+ {
+ 	struct power_supply_battery_info *info;
+@@ -561,7 +792,15 @@ static int max77759_charger_init(struct max77759_charger *chg)
+ 	} else {
+ 		fv = info->constant_charge_voltage_max_uv / 1000;
+ 		fast_chg_curr = info->constant_charge_current_max_ua;
++		if (info->charge_full_design_uah > 0)
++			chg->capacity_uah = info->charge_full_design_uah;
+ 	}
++	chg->fv_max_mv = fv;
++	chg->cc_max_ua = fast_chg_curr;
++
++	ret = max77759_parse_step_charging(chg);
++	if (ret)
++		return ret;
+ 
+ 	ret = set_fast_charge_current_limit(chg, fast_chg_curr);
+ 	if (ret)
+@@ -598,6 +837,7 @@ static void psy_work_item(struct work_struct *work)
+ 	struct max77759_charger *chg =
+ 		container_of(work, struct max77759_charger, psy_work.work);
+ 	union power_supply_propval current_limit, online;
++	bool inhibit;
+ 	int ret;
+ 
+ 	ret = power_supply_get_property(chg->tcpm_psy,
+@@ -635,9 +875,19 @@ static void psy_work_item(struct work_struct *work)
+ 			goto err;
+ 		}
+ 
+-		charger_set_mode(chg, MAX77759_CHGR_MODE_CHG_BUCK_ON);
++		scoped_guard(mutex, &chg->lock)
++			inhibit = chg->charge_inhibit;
++		charger_set_mode(chg, inhibit ? MAX77759_CHGR_MODE_BUCK_ON :
++				 MAX77759_CHGR_MODE_CHG_BUCK_ON);
++		if (chg->n_temps)
++			mod_delayed_work(system_wq, &chg->temp_work, 0);
+ 	} else {
+ 		charger_set_mode(chg, MAX77759_CHGR_MODE_OFF);
++		if (chg->n_temps) {
++			cancel_delayed_work(&chg->temp_work);
++			chg->tier = -1;
++			chg->band = -1;
++		}
+ 	}
+ 
+ 	scoped_guard(mutex, &chg->retry_lock) {
+@@ -753,6 +1003,18 @@ static int max77759_charger_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, PTR_ERR(chg->chgin_otg_rdev),
+ 				     "Failed to register chgin otg regulator\n");
+ 
++	chg->tier = -1;
++	chg->band = -1;
++	chg->temp_health = POWER_SUPPLY_HEALTH_UNKNOWN;
++	ret = devm_add_action_or_reset(dev, max77759_put_bat_psy, chg);
++	if (ret)
++		return ret;
++
++	ret = devm_delayed_work_autocancel(dev, &chg->temp_work,
++					   max77759_temp_work);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to initialize temp work\n");
++
+ 	ret = devm_delayed_work_autocancel(dev, &chg->psy_work, psy_work_item);
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "Failed to initialize psy work\n");
+@@ -788,6 +1050,7 @@ static void max77759_charger_shutdown(struct platform_device *pdev)
+ 		return;
+ 
+ 	cancel_delayed_work_sync(&chg->psy_work);
++	cancel_delayed_work_sync(&chg->temp_work);
+ 	set_input_current_limit(chg, 500000);
+ 	charger_set_mode(chg, MAX77759_CHGR_MODE_OFF);
+ 	charger_set_mode(chg, MAX77759_CHGR_MODE_CHG_BUCK_ON);
+diff --git a/include/linux/mfd/max77759.h b/include/linux/mfd/max77759.h
+index 7c0b13219..10f400e97 100644
+--- a/include/linux/mfd/max77759.h
++++ b/include/linux/mfd/max77759.h
+@@ -205,6 +205,7 @@ enum max77759_chgr_chg_dtls_states {
+ 
+ enum max77759_chgr_mode {
+ 	MAX77759_CHGR_MODE_OFF = 0x0,
++	MAX77759_CHGR_MODE_BUCK_ON = 0x4,
+ 	MAX77759_CHGR_MODE_CHG_BUCK_ON = 0x5,
+ 	MAX77759_CHGR_MODE_OTG_BOOST_ON = 0xA,
+ };

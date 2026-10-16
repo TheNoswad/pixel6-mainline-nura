@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 14:42:50 -0500
+Subject: [PATCH] media: gs101-mipi-csis: ping-pong the WDMA between two slots
+
+The driver used a single WDMA address slot and wrote the next buffer's
+address from the FRAME_END interrupt. The DMA raises FRAME_END together
+with the next FRAME_START (INT_SRC 0x110 on every frame), so the address
+always changed after the next frame had already begun. Usually only a
+few lines in, but with the CPUs busy far enough that the top of the new
+frame went into the buffer just handed to userspace, and the next buffer
+kept the top of a frame four buffers old. With zero-copy consumers
+(libcamera's GPU debayer reads the buffer in place) this shows as the
+preview jumping back and forth.
+
+Program slots 0 and 1 (FRAMECNT_SEQ = 0x3). The channel moves to the
+other, already programmed slot by itself at FRAME_START; FRAME_END
+returns the buffer of the slot that just completed and refills that
+slot (next queued buffer or the scratch frame), with a whole frame time
+to do it. The slot being written is taken from ACTIVE_FRAMEPTR at
+FRAME_START. pingpong=0 (module parameter, read at stream start) keeps
+the old single-slot behaviour.
+
+Verified (marker stamped into each buffer before QBUF, IMX355 full
+mode, 8 busy loops on CPUs 1-7): 0/300 partially written frames with
+ping-pong, 20/300 with a single slot; slow consumer (underruns into the
+scratch frame) 0/150 both ways.
+---
+ .../media/platform/samsung/gs101-mipi-csis.c  | 108 +++++++++++++++++-
+ 1 file changed, 107 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/samsung/gs101-mipi-csis.c b/drivers/media/platform/samsung/gs101-mipi-csis.c
+index 44ca203a6..44e1ddeab 100644
+--- a/drivers/media/platform/samsung/gs101-mipi-csis.c
++++ b/drivers/media/platform/samsung/gs101-mipi-csis.c
+@@ -255,6 +255,24 @@ static bool gs101_csis_repack_1e = true;
+ module_param_named(repack_1e, gs101_csis_repack_1e, bool, 0644);
+ MODULE_PARM_DESC(repack_1e, "repack WDMA FMT 0x1e to SRGGB10P in buf_finish (default 1)");
+ 
++/*
++ * Ping-pong the WDMA between address slots 0 and 1 (read at stream start).
++ * With a single slot the next buffer address can only be written from the
++ * FRAME_END interrupt, and the DMA raises FRAME_END together with the next
++ * FRAME_START (INT_SRC 0x110 on every frame), so the address always
++ * changed after the next frame had begun. Usually only a few lines in;
++ * with the CPUs busy far enough that the top of the new frame landed in
++ * the buffer just handed to userspace while the next buffer kept the top
++ * of a frame four buffers old (2026-10-11: up to 29/300 frames, seen in
++ * apps as the preview jumping back). With two slots
++ * the channel moves to the other, already programmed slot by itself at
++ * FRAME_START, and FRAME_END only refills the slot that just completed:
++ * a whole frame time instead of the blanking.
++ */
++static bool gs101_csis_pingpong = true;
++module_param_named(pingpong, gs101_csis_pingpong, bool, 0644);
++MODULE_PARM_DESC(pingpong, "WDMA ping-pong between two address slots (default 1; 0 = single slot)");
++
+ struct gs101_csis {
+ 	struct device		*dev;
+ 	void __iomem		*link;		/* csis-link0 */
+@@ -320,7 +338,11 @@ struct gs101_csis {
+ 	struct v4l2_pix_format		pixfmt;
+ 	struct list_head		buf_list;
+ 	struct gs101_csis_buffer	*cur_buf;
+-	spinlock_t			buf_lock;	/* protects buf_list/cur_buf/dma_armed */
++	/* ping-pong: buffer in ADDR1/ADDR2 (NULL = scratch), slot being written */
++	struct gs101_csis_buffer	*slot_buf[2];
++	bool				pp;
++	unsigned int			pp_writing;
++	spinlock_t			buf_lock;	/* protects buf_list/cur_buf/slot_buf/dma_armed */
+ 	bool				dma_armed;	/* WDMA channel programmed by start_streaming */
+ 	unsigned int			sequence;	/* frame counter for vb2 */
+ 	struct mutex			lock;		/* serialises ioctls */
+@@ -448,6 +470,22 @@ static void gs101_csis_hw_set_dma_addr(struct gs101_csis *csis, dma_addr_t addr)
+ 	is_hw_set_reg(vc, &csi_dmax_chx_regs[CSIS_DMAX_CHX_R_FCNTSEQ], seq);
+ }
+ 
++/* Ping-pong: program one address slot (0 = ADDR1, 1 = ADDR2). */
++static void gs101_csis_hw_set_slot_addr(struct gs101_csis *csis,
++					unsigned int slot, dma_addr_t addr)
++{
++	is_hw_set_reg(gs101_csis_ctx(csis),
++		      &csi_dmax_chx_regs[CSIS_DMAX_CHX_R_ADDR1 + slot],
++		      lower_32_bits(addr));
++}
++
++static u32 gs101_csis_hw_frameptr(struct gs101_csis *csis)
++{
++	return is_hw_get_field(gs101_csis_ctx(csis),
++			       &csi_dmax_chx_regs[CSIS_DMAX_CHX_R_ACT_CTRL],
++			       &csi_dmax_chx_fields[CSIS_DMAX_CHX_F_ACTIVE_FRAMEPTR]);
++}
++
+ /*
+  * Channel 0 write enable. Cleared on buffer underrun so the WDMA never keeps
+  * writing into a buffer already handed back to userspace; re-armed from
+@@ -869,6 +907,49 @@ static irqreturn_t gs101_csis_irq(int irq, void *data)
+ 	if (err)
+ 		dev_warn_ratelimited(csis->dev, "WDMA error INT_SRC=0x%08x\n", src);
+ 
++	if (csis->pp) {
++		struct gs101_csis_buffer *done = NULL, *next;
++		u32 ptr;
++
++		spin_lock(&csis->buf_lock);
++		/*
++		 * FRAME_END first: it normally arrives together with the next
++		 * FRAME_START; pp_writing (from the previous FRAME_START) still
++		 * names the slot that just completed, and the channel is
++		 * already writing the other one. Then FRAME_START: ACTIVE_FRAMEPTR
++		 * is the slot this frame goes to.
++		 */
++		if (src & (1 << (CSIS_INT_DMA_FRAME_END + GS101_CSIS_VC0))) {
++			unsigned int slot = csis->pp_writing;
++
++			done = csis->slot_buf[slot];
++			next = list_first_entry_or_null(&csis->buf_list,
++						struct gs101_csis_buffer, list);
++			if (next)
++				list_del(&next->list);
++			csis->slot_buf[slot] = next;
++			gs101_csis_hw_set_slot_addr(csis, slot, next ?
++						    next->addr : csis->scratch_addr);
++		}
++		if (src & (1 << (CSIS_INT_DMA_FRAME_START + GS101_CSIS_VC0))) {
++			ptr = gs101_csis_hw_frameptr(csis);
++			if (ptr <= 1)
++				csis->pp_writing = ptr;
++			else	/* not a slot we use: keep alternating */
++				csis->pp_writing ^= 1;
++		}
++		spin_unlock(&csis->buf_lock);
++
++		if (done) {
++			done->vb.vb2_buf.timestamp = ktime_get_ns();
++			done->vb.sequence = csis->sequence++;
++			done->vb.field = V4L2_FIELD_NONE;
++			vb2_buffer_done(&done->vb.vb2_buf,
++					err ? VB2_BUF_STATE_ERROR : VB2_BUF_STATE_DONE);
++		}
++		return IRQ_HANDLED;
++	}
++
+ 	/* Sensor on MIPI VC0 -> channel 0 frame-end. */
+ 	if (src & (1 << (CSIS_INT_DMA_FRAME_END + GS101_CSIS_VC0))) {
+ 		struct gs101_csis_buffer *done, *next;
+@@ -1072,12 +1153,19 @@ static void gs101_csis_return_buffers(struct gs101_csis *csis,
+ {
+ 	struct gs101_csis_buffer *buf, *tmp;
+ 	unsigned long flags;
++	unsigned int i;
+ 
+ 	spin_lock_irqsave(&csis->buf_lock, flags);
+ 	if (csis->cur_buf) {
+ 		vb2_buffer_done(&csis->cur_buf->vb.vb2_buf, state);
+ 		csis->cur_buf = NULL;
+ 	}
++	for (i = 0; i < ARRAY_SIZE(csis->slot_buf); i++) {
++		if (csis->slot_buf[i])
++			vb2_buffer_done(&csis->slot_buf[i]->vb.vb2_buf, state);
++		csis->slot_buf[i] = NULL;
++	}
++	csis->pp = false;
+ 	list_for_each_entry_safe(buf, tmp, &csis->buf_list, list) {
+ 		list_del(&buf->list);
+ 		vb2_buffer_done(&buf->vb.vb2_buf, state);
+@@ -1495,6 +1583,24 @@ static int gs101_csis_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	}
+ 	gs101_csis_hw_start(csis, first->addr);
+ 	spin_lock_irqsave(&csis->buf_lock, flags);
++	if (gs101_csis_pingpong) {
++		struct gs101_csis_buffer *second;
++
++		/* slot 0 = first (hw_start), slot 1 = the next buffer or scratch */
++		second = list_first_entry_or_null(&csis->buf_list,
++						  struct gs101_csis_buffer, list);
++		if (second)
++			list_del(&second->list);
++		csis->slot_buf[0] = first;
++		csis->slot_buf[1] = second;
++		csis->cur_buf = NULL;
++		gs101_csis_hw_set_slot_addr(csis, 1, second ? second->addr :
++					    csis->scratch_addr);
++		is_hw_set_reg(gs101_csis_ctx(csis),
++			      &csi_dmax_chx_regs[CSIS_DMAX_CHX_R_FCNTSEQ], 0x3);
++		csis->pp_writing = 0;
++		csis->pp = true;
++	}
+ 	csis->sequence = 0;
+ 	csis->dma_armed = true;
+ 	if (csis->dma_ch < 4)

@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 15:12:41 -0500
+Subject: [PATCH] arm64: dts: exynos: gs101-oriole: add the CS40L25A haptics
+
+Node and values as in the stock DT (cs40l25a@43 on hsi2c_8, IRQ gpa6-5,
+reset gpp24-0). f0/redc are the stock defaults; the phone's own factory
+calibration is loaded at runtime through the driver's f0_stored,
+redc_stored and q_stored attributes, as the stock vibrator HAL does.
+---
+ .../boot/dts/exynos/google/gs101-oriole.dts   | 44 +++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101-oriole.dts b/arch/arm64/boot/dts/exynos/google/gs101-oriole.dts
+index e7379b11e..2cff63bb1 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101-oriole.dts
++++ b/arch/arm64/boot/dts/exynos/google/gs101-oriole.dts
+@@ -154,3 +154,47 @@ controller-data {
+ 		};
+ 	};
+ };
++
++&hsi2c_8 {
++	/*
++	 * CS40L25A haptics, values from the stock DT. f0/redc here are the
++	 * stock defaults: the phone's factory calibration (persist
++	 * haptics/cs40l25a.cal) is written to f0_stored/redc_stored/q_stored
++	 * from userspace, like the stock vibrator HAL does.
++	 */
++	haptics@43 {
++		compatible = "cirrus,cs40l25a";
++		reg = <0x43>;
++		interrupt-parent = <&gpa6>;
++		interrupts = <5 IRQ_TYPE_LEVEL_LOW>;
++		reset-gpios = <&gpp24 0 GPIO_ACTIVE_HIGH>;
++		async-suspend;
++		cirrus,fw-id-remap = <0x1400cb>;
++		cirrus,boost-ind-nanohenry = <1000>;
++		cirrus,boost-cap-microfarad = <4>;
++		cirrus,boost-ipk-milliamp = <4500>;
++		cirrus,boost-ctl-millivolt = <7500>;
++		cirrus,boost-clab-millivolt = <7500>;
++		cirrus,boost-ovp-millivolt = <12000>;
++		cirrus,f0-default = <0x265c50>;
++		cirrus,f0-min = <0x230000>;
++		cirrus,f0-max = <0x294000>;
++		cirrus,redc-comp-disable = <1>;
++		cirrus,redc-default = <0x50030>;
++		cirrus,redc-min = <0x36a2a>;
++		cirrus,redc-max = <0x51f40>;
++		cirrus,gpio1-rise-index = <2>;
++		cirrus,gpio1-fall-index = <1>;
++		cirrus,gpio1-fall-timeout = <0xb8ae>;
++		cirrus,gpio1-mode = <2>;
++		cirrus,hiber-enable;
++		cirrus,refclk-gpio2 = <1>;
++		cirrus,asp-bclk-freq-hz = <6144000>;
++		cirrus,asp-bclk-inv;
++		cirrus,asp-fmt = <0>;
++		cirrus,asp-slot-num = <2>;
++		cirrus,asp-slot-width = <32>;
++		cirrus,asp-samp-width = <24>;
++		cirrus,dcm-disable;
++	};
++};

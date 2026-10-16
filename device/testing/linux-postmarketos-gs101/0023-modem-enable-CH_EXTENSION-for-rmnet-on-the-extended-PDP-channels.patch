@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 19:48:13 -0500
+Subject: [PATCH] modem: enable CH_EXTENSION for rmnet on the extended PDP
+ channels
+
+rmnet sits on the extended PDP channels (DT iod,ch = 181). Without
+CH_EXTENSION exynos_ps_ch() only knows channels 1..10, so rmnet TX lands
+in the legacy raw ring the CP never drains and data calls pass no
+traffic.
+---
+ modem/Kbuild | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/modem/Kbuild b/modem/Kbuild
+index 2eb435006..d3a1f0f0f 100644
+--- a/modem/Kbuild
++++ b/modem/Kbuild
+@@ -35,6 +35,7 @@ ccflags-y += -DCONFIG_LINK_DEVICE_PCIE=1
+ ccflags-y += -DCONFIG_LINK_DEVICE_WITH_SBD_ARCH=1
+ ccflags-y += -DCONFIG_CP_PKTPROC=1
+ ccflags-y += -DCONFIG_CP_PKTPROC_UL=1
++ccflags-y += -DCONFIG_CH_EXTENSION=1
+ 
+ # cp_gpio_type puts CP_WRST_N, CP2AP_CP_WRST_N and PM_WRST_N behind
+ # !CP_WRESET_WA, and s5100_get_pdata() requires every entry up to CP_GPIO_MAX

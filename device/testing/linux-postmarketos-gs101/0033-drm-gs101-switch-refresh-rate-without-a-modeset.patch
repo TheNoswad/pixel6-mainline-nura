@@ -1,0 +1,178 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 19:16:29 -0500
+Subject: [PATCH] drm/gs101: switch refresh rate without a modeset
+
+Switching the s6e3fc3 between 60 and 90 Hz was a full modeset: DECON and
+the panel were disabled and enabled again. hw_init()/hw_stop() are stubs,
+DECON runs on the bootloader's setup, and doing this while going to
+90 Hz froze the phone at login.
+
+Do what the vendor driver does (s6e3fc3_is_mode_seamless(): modes equal
+but for the clock): keep DECON running, and only tell the panel the new
+rate. In command mode the panel sets the frame rate through TE and DECON
+follows it. Tested beforehand by sending the vendor
+s6e3fc3_change_frequency() sequence to the running panel: DECON frame
+done at 88/s and no hangs.
+
+Also use the vendor 90 Hz pixel clock (252747 kHz, 90.00 Hz rather than
+90.44 Hz), and make 90 Hz the preferred mode: Phosh applies the
+preferred mode, and phoc 0.57 drops other modes chosen by clients.
+---
+ drivers/gpu/drm/gs101/gs101_decon.c           | 25 ++++++++++++++
+ drivers/gpu/drm/gs101/gs101_drm.h             |  1 +
+ drivers/gpu/drm/gs101/gs101_drm_drv.c         | 34 ++++++++++++++++++-
+ drivers/gpu/drm/panel/panel-samsung-s6e3fc3.c | 10 ++++--
+ 4 files changed, 66 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/gs101/gs101_decon.c b/drivers/gpu/drm/gs101/gs101_decon.c
+index d3710f84e..5dab6eb5f 100644
+--- a/drivers/gpu/drm/gs101/gs101_decon.c
++++ b/drivers/gpu/drm/gs101/gs101_decon.c
+@@ -37,6 +37,7 @@
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_crtc.h>
++#include <drm/drm_modes.h>
+ #include <drm/drm_modeset_helper_vtables.h>
+ #include <drm/drm_plane.h>
+ #include <drm/drm_probe_helper.h>
+@@ -328,7 +329,31 @@ static void gs101_decon_atomic_flush(struct drm_crtc *crtc,
+ 	spin_unlock_irq(&crtc->dev->event_lock);
+ }
+ 
++/*
++ * A change of refresh rate alone is seamless, as in the vendor driver
++ * (s6e3fc3_is_mode_seamless(): drm_mode_equal_no_clocks()). In command mode
++ * the panel sets the frame rate through TE and DECON only follows it, so
++ * nothing on the host side depends on the mode clock. A full modeset would
++ * instead disable and re-enable DECON, which cannot be set up again here
++ * (hw_init() is a stub), and doing that while switching to 90 Hz froze the
++ * phone. gs101_drm_commit_tail() tells the panel about the new rate.
++ */
++static int gs101_decon_atomic_check(struct drm_crtc *crtc,
++				    struct drm_atomic_commit *state)
++{
++	struct drm_crtc_state *old = drm_atomic_get_old_crtc_state(state, crtc);
++	struct drm_crtc_state *new = drm_atomic_get_new_crtc_state(state, crtc);
++
++	if (new->mode_changed && !new->active_changed &&
++	    !new->connectors_changed && old->active && new->active &&
++	    drm_mode_equal_no_clocks(&old->mode, &new->mode))
++		new->mode_changed = false;
++
++	return 0;
++}
++
+ static const struct drm_crtc_helper_funcs gs101_decon_crtc_helper_funcs = {
++	.atomic_check	= gs101_decon_atomic_check,
+ 	.atomic_enable	= gs101_decon_atomic_enable,
+ 	.atomic_disable	= gs101_decon_atomic_disable,
+ 	.atomic_flush	= gs101_decon_atomic_flush,
+diff --git a/drivers/gpu/drm/gs101/gs101_drm.h b/drivers/gpu/drm/gs101/gs101_drm.h
+index e206558c4..5e822de9d 100644
+--- a/drivers/gpu/drm/gs101/gs101_drm.h
++++ b/drivers/gpu/drm/gs101/gs101_drm.h
+@@ -20,6 +20,7 @@ struct gs101_drm {
+ 	struct drm_device drm;
+ 	struct drm_encoder encoder;
+ 	struct drm_connector connector;
++	struct drm_panel *panel;
+ };
+ 
+ extern struct platform_driver gs101_decon_driver;
+diff --git a/drivers/gpu/drm/gs101/gs101_drm_drv.c b/drivers/gpu/drm/gs101/gs101_drm_drv.c
+index 115455258..77552e3e8 100644
+--- a/drivers/gpu/drm/gs101/gs101_drm_drv.c
++++ b/drivers/gpu/drm/gs101/gs101_drm_drv.c
+@@ -30,6 +30,7 @@
+ #include <drm/drm_gem_dma_helper.h>
+ #include <drm/drm_gem_framebuffer_helper.h>
+ #include <drm/drm_mode_config.h>
++#include <drm/drm_modes.h>
+ #include <drm/drm_modeset_helper_vtables.h>
+ #include <drm/drm_of.h>
+ #include <drm/drm_print.h>
+@@ -56,8 +57,38 @@ static const struct drm_driver gs101_drm_driver = {
+ 	DRM_FBDEV_DMA_DRIVER_OPS,
+ };
+ 
++/*
++ * After a seamless refresh change (gs101_decon_atomic_check()) the panel still
++ * runs at the old rate. drm_panel has no op for this; the panel's enable path
++ * sends the frequency for the current CRTC mode (s6e3fc3_set_vrefresh(), the
++ * vendor s6e3fc3_change_frequency()), so go through disable and enable. For
++ * this panel that touches no power state: disable only stops the deferred
++ * work, enable resends display on and reapplies brightness and rate.
++ */
++static void gs101_drm_commit_tail(struct drm_atomic_commit *state)
++{
++	struct gs101_drm *priv = container_of(state->dev, struct gs101_drm, drm);
++	struct drm_crtc_state *old, *new;
++	struct drm_crtc *crtc;
++	bool refresh = false;
++	int i;
++
++	drm_atomic_helper_commit_tail_rpm(state);
++
++	for_each_oldnew_crtc_in_state(state, crtc, old, new, i)
++		if (old->active && new->active &&
++		    !drm_atomic_crtc_needs_modeset(new) &&
++		    drm_mode_vrefresh(&old->mode) != drm_mode_vrefresh(&new->mode))
++			refresh = true;
++
++	if (refresh && priv->panel) {
++		drm_panel_disable(priv->panel);
++		drm_panel_enable(priv->panel);
++	}
++}
++
+ static const struct drm_mode_config_helper_funcs gs101_drm_mode_config_helper_funcs = {
+-	.atomic_commit_tail	= drm_atomic_helper_commit_tail_rpm,
++	.atomic_commit_tail	= gs101_drm_commit_tail,
+ };
+ 
+ static const struct drm_mode_config_funcs gs101_drm_mode_config_funcs = {
+@@ -216,6 +247,7 @@ static int gs101_drm_attach_panel(struct gs101_drm *priv)
+ 		if (ret)
+ 			return ret;
+ 
++		priv->panel = panel;
+ 		drm_info(drm, "panel attached through bridge\n");
+ 
+ 		return 0;
+diff --git a/drivers/gpu/drm/panel/panel-samsung-s6e3fc3.c b/drivers/gpu/drm/panel/panel-samsung-s6e3fc3.c
+index bc6d64c39..8ad9fa375 100644
+--- a/drivers/gpu/drm/panel/panel-samsung-s6e3fc3.c
++++ b/drivers/gpu/drm/panel/panel-samsung-s6e3fc3.c
+@@ -75,7 +75,7 @@ static const struct drm_display_mode s6e3fc3_mode = {
+ 
+ static const struct drm_display_mode s6e3fc3_mode_90 = {
+ 	.name = "1080x2400x90",
+-	.clock = 253989,
++	.clock = 252747,
+ 	.hdisplay = 1080,
+ 	.hsync_start = 1080 + 32,
+ 	.hsync_end = 1080 + 32 + 12,
+@@ -240,7 +240,11 @@ static int s6e3fc3_get_modes(struct drm_panel *panel,
+ 
+ 	ctx->connector = connector;
+ 
+-	mode = drm_mode_duplicate(connector->dev, &s6e3fc3_mode);
++	/*
++	 * 90 Hz is preferred, like the stock "Smooth display" default;
++	 * compositors that apply the preferred mode then run at 90 Hz.
++	 */
++	mode = drm_mode_duplicate(connector->dev, &s6e3fc3_mode_90);
+ 	if (!mode)
+ 		return -ENOMEM;
+ 
+@@ -248,7 +252,7 @@ static int s6e3fc3_get_modes(struct drm_panel *panel,
+ 	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+ 	drm_mode_probed_add(connector, mode);
+ 
+-	mode = drm_mode_duplicate(connector->dev, &s6e3fc3_mode_90);
++	mode = drm_mode_duplicate(connector->dev, &s6e3fc3_mode);
+ 	if (!mode)
+ 		return -ENOMEM;
+ 

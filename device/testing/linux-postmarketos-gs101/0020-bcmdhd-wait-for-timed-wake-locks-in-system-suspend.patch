@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noswad <64293615+TheNoswad@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 17:08:06 -0500
+Subject: [PATCH] bcmdhd: wait for timed wake locks in system suspend
+
+dhdpcie_bus_suspend gives up after 3 x 1 ms if any dhd wake lock is
+held, expecting Android autosleep to retry. With systemd the suspend
+just fails (EBUSY): NetworkManager disconnecting for sleep leaves the
+100 ms rx/txfl locks held. During system suspend, keep polling for up to
+2 s so they expire.
+---
+ bcmdhd/dhd_pcie.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/bcmdhd/dhd_pcie.c b/bcmdhd/dhd_pcie.c
+index a62f9aef7..4a2d0007d 100644
+--- a/bcmdhd/dhd_pcie.c
++++ b/bcmdhd/dhd_pcie.c
+@@ -83,6 +83,7 @@
+ #include BCMEMBEDIMAGE
+ #endif /* BCMEMBEDIMAGE */
+ 
++#include <linux/suspend.h>
+ #ifdef DHD_PCIE_NATIVE_RUNTIMEPM
+ #include <linux/pm_runtime.h>
+ #endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
+@@ -111,6 +112,11 @@
+ #define MEMBLOCK	2048		/* Block size used for downloading of dongle image */
+ #ifdef LINUX
+ #define MAX_WKLK_IDLE_CHECK	3 /* times dhd_wake_lock checked before deciding not to suspend */
++/*
++ * Local: Linux system suspend (systemd) does not retry like Android autosleep,
++ * so let the timed rx/txfl (100 ms) and evt (1.5 s) wake locks run out instead.
++ */
++#define MAX_WKLK_SYS_SUSPEND_CHECK	200	/* x 10 ms */
+ #endif /* LINUX */
+ 
+ #define	DHD_MAX_ITEMS_HPP_TXCPL_RING	512
+@@ -9514,6 +9520,13 @@ dhdpcie_bus_suspend(struct dhd_bus *bus, bool state)
+ 			OSL_SLEEP(1);
+ 			idle_retry++;
+ 		}
++		idle_retry = 0;
++		while (active && pm_suspend_target_state != PM_SUSPEND_ON &&
++			idle_retry < MAX_WKLK_SYS_SUSPEND_CHECK) {
++			OSL_SLEEP(10);
++			idle_retry++;
++			active = dhd_os_check_wakelock_all(bus->dhd);
++		}
+ 
+ 		if (bus->wait_for_d3_ack) {
+ 			DHD_RPM(("%s: Got D3 Ack \n", __FUNCTION__));

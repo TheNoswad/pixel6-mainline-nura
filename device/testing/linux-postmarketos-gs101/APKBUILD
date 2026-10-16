@@ -3,7 +3,7 @@
 maintainer="Ingo Reitz <9l@9lo.re>"
 pkgname=linux-postmarketos-gs101
 pkgver=7.2.0_rc3
-pkgrel=48
+pkgrel=52
 pkgdesc="Google gs101 (Pixel 6 Series) kernel, M8 gs101-mainline tree"
 arch="aarch64"
 _carch="arm64"
@@ -27,48 +27,51 @@ makedepends="
 
 # Source
 _commit="850061c79264d018317e9f849701f165e138e20c"
+_v4l2loopback="0.15.4"
 _config="config-$_flavor.$arch"
 source="
 	$pkgname-$_commit.tar.gz::https://github.com/m8l8th814n-eng/gs101-mainline/archive/$_commit.tar.gz
+	v4l2loopback-$_v4l2loopback.tar.gz::https://github.com/v4l2loopback/v4l2loopback/archive/v$_v4l2loopback.tar.gz
+	v4l2loopback-compressed-sizeimage.diff
 	$_config
-	0001-max77759-charger-default-usb-current.patch
-	0002-max77759-charger-enable-at-shutdown.patch
-	0003-gs101-pixel-fg-supplied-by-charger.patch
-	0004-exynos-pmu-keep-c2-hint-in-s2idle.patch
-	0005-bcmdhd-wait-for-timed-wakelocks-in-suspend.patch
-	0006-cs35l41dna-start-cspl-after-pll-lock.patch
-	0007-gs101-cool-all-cpu-clusters.patch
-	0008-gs101-gpu-dvfs-acpm.patch
-	0010-bcmdhd-remove-dynamic-cpuhp-state.patch
-	0011-clk-gs101-skip-mifmirror-queue-save-restore.patch
-	0012-pcie-gs101-longer-relink-wait.patch
-	0013-gs101-pcie0-max-link-speed-gen1.patch
-	0014-pcie-gs101-vendor-relink-tries-and-l2-entry.patch
-	0015-aoc-channel-dev-empty-list-doorbell.patch
-	0016-aoc-get-sensor-rails-lazily.patch
-	0017-panfrost-gs101-wait-for-cpufreq.patch
-	0018-bluetooth-btbcm-bcm4389c1-default-address.patch
-	0019-gs101-pixel-sink-9v-pd.patch
-	0020-gs101-mipi-csis-gpu-importable-stride.patch
-	0021-gs101-mipi-csis-wdma-ping-pong.patch
-	0022-gps-bcm47765-fix-teardown.patch
-	0023-gs101-pixel-gnss-ldos-always-on.patch
-	0024-gs101-pixel-gnss-spi-gpio-cs.patch
-	0025-gps-bcm47765-byte-words-fix-control.patch
-	0026-pcie-gs101-rearm-msi-after-demux.patch
-	0027-bcmdhd-restart-interface-on-hang.patch
-	0028-input-cs40l2x-haptics-driver.patch
-	0029-gs101-oriole-cs40l25a-haptics.patch
-	0030-max17042-clear-tex.patch
-	0031-imx386-disable-embedded-data.patch
-	0032-cs35l41dna-verify-otp-read.patch
-	0033-aoc-voice-call-mic-capture-switch.patch
-	0034-gpio-max77759-ignore-unmapped-irqs.patch
-	0035-max17042-max77759-load-battery-model.patch
-	0036-gs101-oriole-battery-models.patch
-	0037-max77759-charger-step-charging-by-temperature.patch
-	0038-gs101-oriole-step-charging.patch
-	0039-gs101-drm-seamless-refresh-rate-switch.patch
+	0001-power-supply-max77759-charge-at-500-mA-from-Default-USB-sources.patch
+	0002-power-supply-max77759-leave-charging-enabled-at-shutdown.patch
+	0003-arm64-dts-gs101-pixel-fuel-gauge-is-supplied-by-the-max77759-charger.patch
+	0004-arm64-dts-gs101-pixel-sink-9-V-from-USB-PD-chargers.patch
+	0005-power-supply-max17042-measure-temperature-when-TEx-is-left-set.patch
+	0006-power-supply-max17042-load-MAX77759-battery-model-from-DT.patch
+	0007-arm64-dts-exynos-gs101-oriole-add-fuel-gauge-battery-models.patch
+	0008-power-supply-max77759-step-charging-by-battery-temperature.patch
+	0009-arm64-dts-exynos-gs101-oriole-battery-info-and-step-charging.patch
+	0010-arm64-dts-gs101-thermal-cooling-for-every-CPU-cluster.patch
+	0011-gs101-GPU-DVFS-through-the-ACPM-G3D-G3DL2-clocks.patch
+	0012-panfrost-gs101-don-t-power-the-GPU-up-before-cpufreq.patch
+	0013-soc-samsung-exynos-pmu-keep-C2-hint-in-suspend-to-idle.patch
+	0014-clk-samsung-gs101-do-not-save-restore-the-MIF-mirror-queue.patch
+	0015-arm64-dts-gs101-pcie0-max-link-speed-1.patch
+	0016-PCI-gs101-vendor-relink-retry-timing-PME_Turn_Off-before-power-off.patch
+	0017-PCI-gs101-re-arm-the-MSI-receiver-after-demuxing.patch
+	0018-bcmdhd-drop-the-WL_STATIC_IF-placeholder-interface.patch
+	0019-bcmdhd-don-t-take-CONFIG_FIB_RULES-as-Android-kernel.patch
+	0020-bcmdhd-wait-for-timed-wake-locks-in-system-suspend.patch
+	0021-bcmdhd-remove-the-dynamic-CPU-hotplug-state-on-unload.patch
+	0022-bcmdhd-restart-the-interface-on-HANG-dump-RC-MSI-state.patch
+	0023-modem-enable-CH_EXTENSION-for-rmnet-on-the-extended-PDP-channels.patch
+	0024-cs35l41dna-read-OTP-in-PIO-sized-chunks-and-verify-it.patch
+	0025-aoc-add-a-Voice-Call-Mic-Capture-Switch.patch
+	0026-aoc_channel_dev-don-t-take-the-list-head-as-the-doorbell-channel.patch
+	0027-aoc-get-the-sensor-rails-lazily.patch
+	0028-gps-bcm47765-fix-unbind-and-probe-failure-teardown.patch
+	0029-arm64-dts-gs101-pixel-keep-the-GNSS-LDOs-on.patch
+	0030-arm64-dts-gs101-pixel-GNSS-SPI-chip-select-as-a-GPIO.patch
+	0031-gps-bcm47765-byte-sized-SPI-words-fix-bbd_control-matching.patch
+	0032-Bluetooth-btbcm-mark-the-BCM4389C1-default-address-invalid.patch
+	0033-drm-gs101-switch-refresh-rate-without-a-modeset.patch
+	0034-media-gs101-mipi-csis-64-byte-aligned-stride-for-unpacked-RAW10.patch
+	0035-media-gs101-mipi-csis-ping-pong-the-WDMA-between-two-slots.patch
+	0036-media-i2c-imx386-turn-embedded-data-off.patch
+	0037-Input-add-the-Cirrus-Logic-CS40L2x-haptics-driver-Google-vendor.patch
+	0038-arm64-dts-exynos-gs101-oriole-add-the-CS40L25A-haptics.patch
 "
 builddir="$srcdir/gs101-mainline-$_commit"
 
@@ -196,7 +199,7 @@ CONFIG_VIDEO_S5KGN1=m
 CONFIG_VIDEO_IMX386=m
 CONFIG_VIDEO_LM3644=m
 CONFIG_VL53L1X_I2C=m
-# Pixel 6 haptics (CS40L25A), patch 0028
+# Pixel 6 haptics (CS40L25A), patch 0037
 CONFIG_INPUT_CS40L2X=m
 CONFIG_HIDRAW=y
 CONFIG_INPUT_JOYDEV=m
@@ -247,8 +250,8 @@ _audio_dirs="trusty gsa aoc cs35l41dna"
 
 # Broadcom BCM4775 GNSS on spi10 (see gps/Kbuild in the tree): exposes
 # /dev/ttyBCM and /dev/bbd_*, which the GNSS userspace talks to. The
-# receiver's LDOs are kept on by patch 0023, its chip select is a GPIO
-# (0024). Kconfig not sourced either.
+# receiver's LDOs are kept on by patch 0029, its chip select is a GPIO
+# (0030). Kconfig not sourced either.
 _gps_config="
 	CONFIG_BCM_GPS_SPI_DRIVER=m
 	CONFIG_BCM_GPS_PPS_DRIVER=m
@@ -263,6 +266,11 @@ _modem_config="
 	CONFIG_BOOT_DEVICE_SPI=m
 "
 
+# v4l2loopback (out of tree): waydroid-camerad feeds the cameras to
+# Waydroid's external camera HAL through loopback devices. Built here so it
+# always matches the kernel. The .diff (not a kernel .patch) lets the writer
+# set a smaller buffer size for MJPEG: Android rejects anything above w*h*2.
+
 # modpost rejects KBUILD_EXTRA_SYMBOLS files that do not exist yet, so only
 # aoc gets the trusty and gsa symbol tables.
 _audio_extra_symbols() {
@@ -272,39 +280,13 @@ _audio_extra_symbols() {
 
 prepare() {
 	default_prepare
+	patch -d "$srcdir/v4l2loopback-$_v4l2loopback" -p1 \
+		< "$srcdir"/v4l2loopback-compressed-sizeimage.diff
 	cp "$srcdir/config-$_flavor.$CARCH" .config
 	echo "$_extra_config" >> .config
 
 	unset LDFLAGS
 	make ARCH="$_carch" LLVM=1 olddefconfig
-
-	# No Android WL_STATIC_IF placeholder wlan1: when it is bound and
-	# re-created, nl80211 calls on it oops in dhd_net2idx under rtnl.
-	sed -i '/^DHDCFLAGS += -DWL_STATIC_IF$/d' bcmdhd/Kbuild
-	if grep -q -- '-DWL_STATIC_IF' bcmdhd/Kbuild; then
-		error "WL_STATIC_IF still set in bcmdhd/Kbuild"
-		return 1
-	fi
-
-	# bcmdhd's Kbuild uses CONFIG_FIB_RULES as an "Android kernel" proxy for
-	# its debugability/HAL-dump flags. IP_MULTIPLE_TABLES (for Waydroid)
-	# selects FIB_RULES, which turned them on and broke the build
-	# (DHD_PKT_LOGGING_DBGRING without DHD_PKT_LOGGING). Keep the r16 flags.
-	sed -i 's/^ifneq (\$(CONFIG_FIB_RULES),)$/ifneq ($(BCMDHD_ANDROID_DEBUGABILITY),)/' bcmdhd/Kbuild
-	if grep -q 'CONFIG_FIB_RULES' bcmdhd/Kbuild; then
-		error "CONFIG_FIB_RULES still used in bcmdhd/Kbuild"
-		return 1
-	fi
-
-	# rmnet sits on the extended PDP channels (DT iod,ch = 181); without
-	# CH_EXTENSION exynos_ps_ch() only knows 1..10, so rmnet TX lands in the
-	# legacy raw ring the CP never drains and data calls pass no traffic.
-	grep -q -- '-DCONFIG_CH_EXTENSION=1' modem/Kbuild || \
-		sed -i 's/^ccflags-y += -DCONFIG_CP_PKTPROC_UL=1$/&\nccflags-y += -DCONFIG_CH_EXTENSION=1/' modem/Kbuild
-	if ! grep -q -- '-DCONFIG_CH_EXTENSION=1' modem/Kbuild; then
-		error "CONFIG_CH_EXTENSION not set in modem/Kbuild"
-		return 1
-	fi
 
 	local opt
 	for opt in DRM_GS101=m TENSOR_TMU=y BATTERY_MAX17042=m PCIE_GS101=y \
@@ -351,6 +333,9 @@ build() {
 			KBUILD_EXTRA_SYMBOLS="$(_audio_extra_symbols $d)" \
 			$_audio_config
 	done
+
+	make -C "$builddir" M="$srcdir/v4l2loopback-$_v4l2loopback" modules \
+		ARCH="$_carch" LLVM=1
 }
 
 package() {
@@ -393,6 +378,10 @@ package() {
 			INSTALL_MOD_PATH="$pkgdir"/usr INSTALL_MOD_STRIP=1
 	done
 
+	make -C "$builddir" M="$srcdir/v4l2loopback-$_v4l2loopback" modules_install \
+		ARCH="$_carch" LLVM=1 \
+		INSTALL_MOD_PATH="$pkgdir"/usr INSTALL_MOD_STRIP=1
+
 	rm -f "$pkgdir"/lib/modules/*/build "$pkgdir"/lib/modules/*/source
 
 	install -D "$builddir"/include/config/kernel.release \
@@ -412,43 +401,45 @@ package() {
 
 sha512sums="
 a1c0bc4d002edc99045205a6973049b580edd90e1431a87001dddacd526e49c567dd826c1e68e29c45d668c07d577e3418fcb4831b79e3961087704a24e4c025  linux-postmarketos-gs101-850061c79264d018317e9f849701f165e138e20c.tar.gz
+4105f920706dc917c7824deb1c320a9e88604b573fed1e16c2c6ccd331257c72eda265f66f09517ef54bb1257626378bc1d14f3afd8ca0307a8363fbc3d9082a  v4l2loopback-0.15.4.tar.gz
+85cc310342947febc08ca0ff2033a6210cf844d6b707a446c9c1ab5cfb765f4dc04d61dbd44f86d38b6fe579d9d4efaec6712ddb3cc5f0f7862aba0f474cf732  v4l2loopback-compressed-sizeimage.diff
 6180df506abc76566f445f14f5994204c48d5675e0593e33d443c6c03c3be7c0098242a81af42ff086ed9e2562fe70d2dc688f3accae8eb7326ca6c962063868  config-postmarketos-gs101.aarch64
-73632cf860b0e696dfc1e8449803d8a48073238202e147e1d90d935ef8e55f45e16669aaa56b8bc00560cda1399cfd158eea0b6f93abce96f14351a8d006a5a5  0001-max77759-charger-default-usb-current.patch
-fb0811ddf77f8918bc7ba6d0cdd484b2d85ee614e7f7bb402e66e799c7c2dc7d73942efc8ca86c2ba2ce0ed9cd1caa42b6958d54ecad5590588fe26df6c796dc  0002-max77759-charger-enable-at-shutdown.patch
-332a1b34811aff722b01e7f1bcb0484819c333ccc9c4e6d02dd569ff03e8242c300e2af73671d6417f664da01a5601429b7437bd29e41fd82d596abe2a89f6e1  0003-gs101-pixel-fg-supplied-by-charger.patch
-c09ca20757f3e05057fd1e63407511896c0331a1fd0e4b84ed0a536aa2e45fae5ab4ca956979d36e2b8e323322307750f834eea880550fdb21c6292bff0420fb  0004-exynos-pmu-keep-c2-hint-in-s2idle.patch
-fdeec6b9339dcd50f40bc75f3fc718407b00ff89ebfca75d60d7d765ecd005eefefc4d1d429f3e5f654c7ab04ec42a814adc3a7201efaf9ba3ef11bf0bcdde56  0005-bcmdhd-wait-for-timed-wakelocks-in-suspend.patch
-676ed2fb10febec96636d61bdc96ea9c18b696b1a05f929f5b6013d7c080539dfbd53952a226b07c3be24786d94d5e794c1cdc3e6ec7d9ba4c9eeb31c5aaa0cd  0006-cs35l41dna-start-cspl-after-pll-lock.patch
-2dc54945a265f5d7a5585a08adc9b4abf62402d8ee03b505956b7a00f44491ea0ad8c634324b9cbec46369e2c8fe6116023cb1e2fc88928f755390cdcc5b7e24  0007-gs101-cool-all-cpu-clusters.patch
-77ca4259b59516c6ffb5e7099a999ca4c19afe409544bdb382d71561e57111c43d29a7917e222025300d504bd98db1be3bbff378ae8c3c7e4cf45dd4643a6852  0008-gs101-gpu-dvfs-acpm.patch
-68323175de355ba3277252ee68ca0ad7ac9dfe41745ed8a621f386c75179559e55519b4be7bb13e53b8eb7fa61783d243706f555f8a55b66e199cafa3bf4dbed  0010-bcmdhd-remove-dynamic-cpuhp-state.patch
-615a1238d19c20cd250bdf7d9aea15a8fd78c876950dda84fa7557e757555cc45cae4eeba25ed531a2c3ff36520c6bc5a478dee1bdf58bfd56de7e7111e6c344  0011-clk-gs101-skip-mifmirror-queue-save-restore.patch
-3407204dd2611fae0672a3c5a59a91a8132266248e8790ebe2385bddb59fcaebf2007a0632c1e5ab7184920d3a811df53ee0795990d590ffdc9060a0eb70fd0c  0012-pcie-gs101-longer-relink-wait.patch
-e315c8c02f5020bef0879721ff16c6d18e600316d1b2faa700916cd4fdf31ef91600444a2e5443a3c051433b9d6445af1ef7756d79480d20b71a19c71dfbb792  0013-gs101-pcie0-max-link-speed-gen1.patch
-b3a20fbbbed1f96d7c5ebba281fe6392412a0d469421f66831e5b901341e7b2cd0de5b1d514ceca0a82c706440e5c88fd84fe4d0f85510ba9b9aa179c98a22e7  0014-pcie-gs101-vendor-relink-tries-and-l2-entry.patch
-d77d36586e74a670738db3bef9a834343cf8f345e5c9955e8fefac60eee332bfc3b2c0a657de4669208550633a954a9f617a4e4541d7d16e4ce02dc550a32d26  0015-aoc-channel-dev-empty-list-doorbell.patch
-c2a10e9f2257463bf16485345ee2da6f88a6ec9d764ca1816bd0226b6f8aee2ea0fbfdebf7d99224eee161b799d28b3933b14184661774f6a3537dab73459c80  0016-aoc-get-sensor-rails-lazily.patch
-dd9bee7be27250cdca5229e8a392ca1d9569822f8fc4699c589e1deae97b63947d116e41392d377e089d7be2f5695f8abc52712f7f9402289032389132bc39b0  0017-panfrost-gs101-wait-for-cpufreq.patch
-3411b85ac337e0a20ef46e7311c9b38447b29bd4b68fb2f78a7ec48a0c9c92c4be556d4fcfe9d1f893e2c7523794e629384d521ff57ddf25d4c47e07828d9956  0018-bluetooth-btbcm-bcm4389c1-default-address.patch
-a346aae23e7c6e34f7df09f0f6578735420b3b7c269ff3f10491f287bcda797409a718de1a3a2c3145b5023b5b8e646bc3531b748c03d2fda15fde81f1911a0e  0019-gs101-pixel-sink-9v-pd.patch
-295c84233e93881df95dbd93e1b3e66b5a82824e265a6eaf6a8fa865fdfec197570563c40e3fd1a24c2938f4dfc885d42d0df17e910fa91375ec1bee6b25f8bf  0020-gs101-mipi-csis-gpu-importable-stride.patch
-512c07b13ebdcfb5a5f3bbbd59e37df8aa11cf4b2ca9fdf499c3d801ccfc4e4349e1db86f12d04d508e9145d7c6a7da0601f85c9e4458aa34468fce17898212b  0021-gs101-mipi-csis-wdma-ping-pong.patch
-dfcf86ce00c590398f83dc39acf413f27fb612162b2bdfb89b12cbd2443c9a8a0deb92b8630c875f90a16bf5bbe10bb5392a8d4ce3592995183e1116f39dbd90  0022-gps-bcm47765-fix-teardown.patch
-2533280912f8af98972a666a657cb58f4bd9a8daa789295c7b7ad9fbc70108fa4129a2113308efc6094310dbc27e7a4873ba8086373bbc0e84bf5cef1b6f89b5  0023-gs101-pixel-gnss-ldos-always-on.patch
-c9c0b2e5bd65302df2d6f83605e200afeb79823d918d8a9ef6ba70e617d714b4d3d37b4aab3015849afe946ab6e19f8a18583bd8a7712a2b4ea0bee9e20ccedf  0024-gs101-pixel-gnss-spi-gpio-cs.patch
-5807b9156cab8efffaa20aacefd981aa493cb31b9c5a3e8646ea817bb68a3602f18ff3611ab1d8059b83d18a431ab9b7627e14c6de3e1ff005424f896ca9fb6a  0025-gps-bcm47765-byte-words-fix-control.patch
-72ac30c3734d6555af0833fbe0720de95a278954ee815b64c874b36df87995be8e1d264b00818053ac54f6d04bfd0fa473fe972163c832735692b115b7e385fb  0026-pcie-gs101-rearm-msi-after-demux.patch
-4fdf06e480444b95856acb6dbeb437103e58f6401c814a9bf9d46480e092f59048aca7ce28ce1005ca784411ec4c616e0c976b5c9af5baa4b3f9271be9721e59  0027-bcmdhd-restart-interface-on-hang.patch
-1b9dc38fd73864956410335614c07fdbfe54035cbb99d69e7e92b475f125729ad47f6eba738df54dc26f652900f246a64f8d5ae308ed894daa3ae403de3ec033  0028-input-cs40l2x-haptics-driver.patch
-8b2f8c2386f5baa3b319d532f08676ea2c8e895f8f4f8dd72681704baeab56844a9ea76c0133f311f3fc5129a79f17ed69242235606155d8180c31523919cfe5  0029-gs101-oriole-cs40l25a-haptics.patch
-dff392c3c83b06ec82045e60fa0bffeca6a96ce4e42d8cdf2a1be0b99eb7d6c175df54b1b070e72cbb7cd7e6b063620330e41d73073a1d50b14cfe77b98898f0  0030-max17042-clear-tex.patch
-4691deb5a01b007438d67ed6f2f4ee62102c93931214032812fbd222171b82f2e4308b023f7a467483aa67b3646f3a297993e24603d4c7aa9a7d97753925ffbe  0031-imx386-disable-embedded-data.patch
-890bcd6dda83945ef8a1874f94017ed6cf70c5ce30860fb936b1fa706a5d53a95470db291f4f043966ddd47124d01c9bbea4e1f0383be39a201e85e5ff9aec25  0032-cs35l41dna-verify-otp-read.patch
-10dccceeb99ba452b736ae39ee6ad3263f25efe34d2400810e4ac4eab4347fb5f8a8972003da67968db8028cf9b6b412cb4e18f740456942ac5e15e6630436a5  0033-aoc-voice-call-mic-capture-switch.patch
-b6477bafba5bc6f0d5b96cde103536ae2df10ebd9e17c31a7feb2584d621f96377dd1724aeaf7ecc15e3044f14d7f343918381ed28e40283879cee13f89bc2a0  0034-gpio-max77759-ignore-unmapped-irqs.patch
-36775c956babb33aa1788ac0f04caf25c512bab8546eeff335906bc84174723eee28e3535dcf0f2d0b488a8f9a5ee0c0276d5cdcc7c9a869da14093ff8e6b998  0035-max17042-max77759-load-battery-model.patch
-ecd3349cf9074466e495c074ddd3270092eced772c573b742cc5d20a3b398ffef78add0c240155e5c218e7b8d07ee5e088c8d50a5432c096899b19dfce13e5a4  0036-gs101-oriole-battery-models.patch
-7813a4aab7bd27aed8058ff51b55f208e8d34b96e47e1ba49fde241e96dc2b1ef80b078eb94e3bd4f947e98a53da416de5bcb73461a5567c389a2b634371d6e5  0037-max77759-charger-step-charging-by-temperature.patch
-368959e35a52f0574a72eb714eeb2991a394f174f1a27d7a70a954166038e6edf79ca2ba67c5cb35934b50d7f8b57aae8289c188fb5488a4c1e54eab22982917  0038-gs101-oriole-step-charging.patch
-47100e3c9dff21681ae25363a4fc07ff5b63d7f36c06c18d587430c8b5e3b50ba45ca2e1cbdbb15c97ce1becefda80c5d13635d7d801e3768aaa7a17ec979094  0039-gs101-drm-seamless-refresh-rate-switch.patch
+92a0f3fd1354d096a26ecc74f0e962a6fe724dd0689da12ab79bc1be3d825f4c6fe096ce24ba1a923b0b91c0073528bddecfc39b727d533b65549cf3f806cb14  0001-power-supply-max77759-charge-at-500-mA-from-Default-USB-sources.patch
+56b5a0c7d06ff77295feee1bc11eb62b265d80475fd785d401383fffc25215a2a1e1e801c584309e3a7a299c502223680550253638d9de6c983bfb9dc56e2fa3  0002-power-supply-max77759-leave-charging-enabled-at-shutdown.patch
+600f3ca2e0ec56594c61421158691f722168250fd857b64f0b6c3ac47ade038af010bc28fa93d824c81b08bcee1f063f48b0b6c5b15cb124dc98747983212522  0003-arm64-dts-gs101-pixel-fuel-gauge-is-supplied-by-the-max77759-charger.patch
+b869a811b1473907baa114f3a3efb019efcc9831f34a6b0db22b03cde65ee44e34528d2eda2814c6d8e57c590946cbf990686d98ce12bf54709fafce1680ac94  0004-arm64-dts-gs101-pixel-sink-9-V-from-USB-PD-chargers.patch
+9f77109e6582de7e607a0513e8ab0461d3846a450e1c3536666ef9ce07f858692f8650f7c3836432bae0c5b2c5da27870f06e6f1f711f1fcc16f56cd72f70209  0005-power-supply-max17042-measure-temperature-when-TEx-is-left-set.patch
+6b7b2e224c9902e43fe0574b79b075ea0ce5ac2adbc47d758119eb6ca4a460515a12b229b5c70e3a1819e6248f664744aa9862f0cab41e4c31bfd0df66c93566  0006-power-supply-max17042-load-MAX77759-battery-model-from-DT.patch
+79e70098fd74841d97daa27c9e42c202859515d000861610b8b89cdc365a95f5667ddf8c85022882ee39982ff2439e0487d78d24c65786eb833b72e488127601  0007-arm64-dts-exynos-gs101-oriole-add-fuel-gauge-battery-models.patch
+f88826acbb36441cfd4834eca76d3855182e24674bb662cfa0eab2fb192bbf7db0186e6af3e6ba76b288835aa91bc672ec3655269ff6b32c9616e431ee08dfb8  0008-power-supply-max77759-step-charging-by-battery-temperature.patch
+6abaab5a836caff4d6f4e5eb8ad02b1bfb3abb676abe04ff8c4eebf8b73c94f1c44348f070e8ea57c5e42a1cdae765c2e1d7c7a731fb1ab53a0e7afb611c7d39  0009-arm64-dts-exynos-gs101-oriole-battery-info-and-step-charging.patch
+d755de41f09ac02bd03ab007939cc8ad73b8f27911987358d1a006e6c9d69df8e2315677333cf177ee1063551c7d21e24624a7ea0200dd666ecf3cfef537bf74  0010-arm64-dts-gs101-thermal-cooling-for-every-CPU-cluster.patch
+31f8ac4b0339a9e165dfa324042549a33ea0ddcc06e400908315a827bcad4a6f3442192e8377cb7d8c328290cbfe653e1936844a78308e467d6ebb44c7219055  0011-gs101-GPU-DVFS-through-the-ACPM-G3D-G3DL2-clocks.patch
+eb082b2a46d4035424462eb1d612e40646293b8384661e8d590d70116d0edc738ccf35dcbb21b8972fa3834aab90bea79b4dd0fe278a37801c109861fe5ea053  0012-panfrost-gs101-don-t-power-the-GPU-up-before-cpufreq.patch
+0b17d6de072b4c771d55709da0cd7f80747beb80b06cc81326694bca5183d2186a9f45baa3e74f126757ece7c8934acc42b49c0b3acb6cb08e59af5d7fbbc2d9  0013-soc-samsung-exynos-pmu-keep-C2-hint-in-suspend-to-idle.patch
+8c387223f2c88f2bee2a16a615b88c5771cac04960fd11bd10b437f49fd9960e20930c76f3f17ad68cb530de9792a69306ee6ce36e558eb81cf67df5bdc8a2b4  0014-clk-samsung-gs101-do-not-save-restore-the-MIF-mirror-queue.patch
+71873c4360a6b18ef6c8fd92f48cbdd370e6551020f3d19088354feb70f78de7c70c731a738fc0990825afa74def1f5cbc71ab35c7e122374f62182e3d28d4a4  0015-arm64-dts-gs101-pcie0-max-link-speed-1.patch
+20f2a5b462c883f89941fb9cc03b53c8bbc202f09c84bb4721e79f3c2a56aa8d35703a2e14e6b77cd959964d78d06da1981f0c51e07c67e3cc800c7c97aa7b24  0016-PCI-gs101-vendor-relink-retry-timing-PME_Turn_Off-before-power-off.patch
+da915221405e6a0d99b40a2e9ba5b04ebd1ac4814313961fe8979b63ff66e82ab00c6584d6f90b7254689984c81c9ae44c6ddab6d0768591a45732e65c5259be  0017-PCI-gs101-re-arm-the-MSI-receiver-after-demuxing.patch
+47988467cbfc813bc94056980a188465e868ad0493e490139690f527eabe2b8003c7bc04f10bd07bafef132b818fe6a95452eed873ab9bc0c8db9e5e84b3fe5e  0018-bcmdhd-drop-the-WL_STATIC_IF-placeholder-interface.patch
+ac3bcfc824731b35d122cc74c08a64c0933c44978e89aa858d95f39cdb336939369b65d7857c5a671aa8eb4a2a5a2e73fd58d1d11234d814dce0f554c9ab5c03  0019-bcmdhd-don-t-take-CONFIG_FIB_RULES-as-Android-kernel.patch
+1c3330475e01c9aaca94414f499353d2cc80b7369a5854ba0e49755cfdf23e5a611bb0cce6f4c2333bec62378666c4a17e482ed9631109450f202c2330ef3dcc  0020-bcmdhd-wait-for-timed-wake-locks-in-system-suspend.patch
+0202c5ed9ef40e94f91c73e70f66127cf8383016a06ba8c738317b79e1ae9f481ae3cfae5b6969aaf8bfad05d0d057362a2c16da2f677c2f14dd152b34dee3d8  0021-bcmdhd-remove-the-dynamic-CPU-hotplug-state-on-unload.patch
+b2997d59f28ceb8dc7cfb056a510a1f7d77fe6035c9ff9e1cb2156896607e3def031cda86613c8d08a5e1154d0955b5be8caed3669643644fe682ebf1f619479  0022-bcmdhd-restart-the-interface-on-HANG-dump-RC-MSI-state.patch
+680bd37eb9fb3424c97cf26c2bd3ec817efdc9b9714dda3ed26059f1bce928ebf41cdcaac3804ea3efaf64db9a61ba150b2bf3d49ee674f4647fae30f3d65ae7  0023-modem-enable-CH_EXTENSION-for-rmnet-on-the-extended-PDP-channels.patch
+5c37e463c278455427e542e15cf0aad58f592e9af2fb77cc21b5c44d6d251f75669f146c184cf87e79405029973b2a3007a3f87dbd22cd3fd54048e712e1fcd6  0024-cs35l41dna-read-OTP-in-PIO-sized-chunks-and-verify-it.patch
+37927aab34d994ad4780b10f70939cfcca3b33e95b5881f4d8b2e92401edb4e4fb691cfe0f7e0a88d4632fd962ce25c16afd9f9acd232e58307864f1e90ccac8  0025-aoc-add-a-Voice-Call-Mic-Capture-Switch.patch
+f35b493c701de47479030996bc91f6d99e549f3561ef50461629063c909cfe71fc2f633de967cfdb62461adaa3c25cc99806e339d45078044b8ab7e12e3d89df  0026-aoc_channel_dev-don-t-take-the-list-head-as-the-doorbell-channel.patch
+ffe783995836d6301803eff3e40897fdbf0fcbf1d3a2b3f33d6adf9ebfdc46f2f36f705b8f7fa0aec37054e535f88bff53e76b767bcb42c2e79c7c9e6c314837  0027-aoc-get-the-sensor-rails-lazily.patch
+a1e68e9bbe9d61e3a6738285af83add84bb32f3fb377eb412e8a7f44471b83e4c6565c625962ca3c4172da8612f1053ec47e01a28fc180fd74d2e4913219d1e5  0028-gps-bcm47765-fix-unbind-and-probe-failure-teardown.patch
+7f34c759341535956c33246885f27ff193529535ebb4dae19d1020bbd831a66306d8c1a90127dcca9b666088840f4e1bb05de23017612f9904330cef73842ad9  0029-arm64-dts-gs101-pixel-keep-the-GNSS-LDOs-on.patch
+963f1af22155aef57dbfb9851843822c6759708a34a9ce6ac40c10bef82c93883a52bc77762216c02034ce3255645fb2f74cf0e8e1909af11e23351416e591f3  0030-arm64-dts-gs101-pixel-GNSS-SPI-chip-select-as-a-GPIO.patch
+eadfbd3b1e42b7c23bf9a2d7bb7e1b211ed96254365e1dd92bb44d952ef2aa13253fe15d9f75b35cd1545e211fd015321279241d0241dc1148eeede0135faab0  0031-gps-bcm47765-byte-sized-SPI-words-fix-bbd_control-matching.patch
+f7f8739571da4bbbcb2a5d62876ea93f3518e254abc80a46b5c96050f814d065599b27511f66a5072150f03837335139cd61900bb6d6eb1aaa9a97845beaf416  0032-Bluetooth-btbcm-mark-the-BCM4389C1-default-address-invalid.patch
+0b27942c5de02d33a8e812e3f26f32bb4f71589ff3eb89b33001bed0d80bbfb42ff1f9a3d5ee82f4847666193fb584be718074aaaeca66e5349b4a72a4efbe2b  0033-drm-gs101-switch-refresh-rate-without-a-modeset.patch
+5ce6d9094cc0b1428d958e583076a1fb0cce752e5ddf6476619fd59da9112573926da7ec1e4dbcad6d710dad197668a340831ace31fb52b85f03c1038c8607b4  0034-media-gs101-mipi-csis-64-byte-aligned-stride-for-unpacked-RAW10.patch
+1f6358cf4dbdfdc6056f8a64fff8afa57383cdf193fca264233e749697af909e9a48b9166ace77c8af96fb53931c6c5e01f875163d8dd0b794157c88edae339f  0035-media-gs101-mipi-csis-ping-pong-the-WDMA-between-two-slots.patch
+3bcc45a0b00ec103a6c84dff13d3523cd1466861e386886164118b4b35b4681c6869319f56ff77675c22f495ce5fbb73f5d5d334dc0a615b986695c80d4295b0  0036-media-i2c-imx386-turn-embedded-data-off.patch
+174fc05ed16223b30fcd07d266c51e8943026b79e23a27ff7a4bc6a703af489b7da7f5c82d4769c50c82bf34c20bdb4dea1fa9a5177712a0d86faafb6db56382  0037-Input-add-the-Cirrus-Logic-CS40L2x-haptics-driver-Google-vendor.patch
+dd88dc7554b40dfd1a015e8c2f47278bbd48c7c35fa61172c31c59709b2ab24b9899e32561d17050fbbbd90f805e11bb0409ac0fe25f1cb42659ecdec100e11a  0038-arm64-dts-exynos-gs101-oriole-add-the-CS40L25A-haptics.patch
 "
